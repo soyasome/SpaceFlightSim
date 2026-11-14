@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>STARWAKE tests</title>
+  <style>
+    body { background: #06121f; color: #cfe8ff; font: 14px/1.7 Consolas, monospace; padding: 24px; }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <h1>STARWAKE 単体テスト</h1>
+  <div id="out">running…</div>
+  <script type="module">
+    import { report } from './tests/harness.js';
+    await import('./tests/m1.test.js');
+    await import('./tests/m2.test.js');
+    await import('./tests/m3.test.js');
+    await import('./tests/m4.test.js');
+    await import('./tests/m5.test.js');
+    await import('./tests/m6.test.js');
+    report();
+  </script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #cfe8ff;
+  font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+}
+
+canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#hud { pointer-events: none; }
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 4, 12, 0.72);
+  z-index: 10;
+}
+#overlay.hidden { display: none; }
+
+.panel {
+  max-width: 560px;
+  padding: 28px 36px;
+  border: 1px solid #2b6ea8;
+  background: rgba(6, 18, 34, 0.92);
+  box-shadow: 0 0 40px rgba(40, 140, 255, 0.25);
+}
+.panel h1 {
+  margin: 0;
+  letter-spacing: 0.4em;
+  font-weight: 300;
+  font-size: 34px;
+  color: #7fd0ff;
+}
+.panel .sub { margin: 4px 0 18px; color: #6f93b5; }
+.panel table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.panel th {
+  text-align: left;
+  padding: 3px 16px 3px 0;
+  color: #9fe0ff;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.panel td { padding: 3px 0; color: #c4d6e6; }
+.panel button {
+  margin-top: 20px;
+  width: 100%;
+  padding: 12px;
+  font-size: 16px;
+  color: #041018;
+  background: #7fd0ff;
+  border: 0;
+  cursor: pointer;
+  letter-spacing: 0.1em;
+}
+.panel button:hover { background: #b4e6ff; }
+.panel .note { margin: 12px 0 0; font-size: 12px; color: #6f93b5; }
+
+/* ---- メニュー (操作方法・設定) ---- */
+.panel { max-width: 940px; max-height: 92vh; overflow-y: auto; box-sizing: border-box; }
+.cols { display: flex; gap: 36px; flex-wrap: wrap; }
+.cols section { flex: 1 1 340px; min-width: 0; }
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: #7fd0ff;
+  border-bottom: 1px solid #1f4f7a;
+  padding-bottom: 6px;
+}
+.setting {
+  display: grid;
+  grid-template-columns: 9.5em 1fr 3.5em;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+.setting .name { color: #9fe0ff; font-weight: 600; }
+.setting .value { text-align: right; color: #c4d6e6; font-variant-numeric: tabular-nums; }
+.setting input[type="range"] { width: 100%; accent-color: #7fd0ff; }
+.setting input[type="checkbox"] { width: 18px; height: 18px; accent-color: #7fd0ff; justify-self: start; }
+.hint { margin: -4px 0 6px; font-size: 12px; color: #6f93b5; }
+.panel button.minor {
+  width: auto;
+  margin-top: 10px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: #9fe0ff;
+  background: transparent;
+  border: 1px solid #2b6ea8;
+  letter-spacing: 0;
+}
+.panel button.minor:hover { background: rgba(127, 208, 255, 0.15); }
+
+#menuBtn {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 5;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #9fe0ff;
+  background: rgba(6, 18, 34, 0.6);
+  border: 1px solid rgba(127, 208, 255, 0.4);
+  cursor: pointer;
+}
+#menuBtn:hover { background: rgba(127, 208, 255, 0.2); }
+#menuBtn kbd {
+  margin-left: 6px;
+  padding: 1px 5px;
+  font: 11px Consolas, monospace;
+  border: 1px solid rgba(127, 208, 255, 0.4);
+  border-radius: 3px;
+}
+
+/* ---- 星図 ---- */
+#starmap {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 4, 12, 0.78);
+  z-index: 11;
+}
+#starmap.hidden { display: none; }
+.maplist { max-height: 46vh; overflow-y: auto; font-size: 13px; }
+.maprow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 2px;
+  border-bottom: 1px solid rgba(43, 110, 168, 0.35);
+}
+.maprow.indent { padding-left: 18px; }
+.maprow.current { background: rgba(127, 208, 255, 0.12); }
+.maprow .nm { color: #cfe8ff; font-weight: 600; }
+.maprow .ty { color: #6f93b5; font-size: 12px; margin-left: 8px; font-weight: 400; }
+.maprow .ds { color: #9fe0ff; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.panel .maprow button {
+  width: auto;
+  margin: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: #9fe0ff;
+  background: transparent;
+  border: 1px solid #2b6ea8;
+}
+.panel .maprow button:hover { background: rgba(127, 208, 255, 0.15); }
+.panel .maprow button.on { color: #041018; background: #8dff9a; border-color: #8dff9a; }
+#mapCanvas { position: static; height: auto; display: block; margin-bottom: 8px; width: 100%; max-width: 360px; background: rgba(0, 8, 20, 0.6); border: 1px solid #1f4f7a; }

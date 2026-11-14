@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STARWAKE</title>
+  <!-- レイヤー配置の最低限。style.css が読めなくても描画・HUD・メニューが縦に並ばないように -->
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    #view, #hud { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #hud { pointer-events: none; }
+    #overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; }
+    #overlay.hidden { display: none; }
+    #menuBtn { position: fixed; top: 10px; right: 12px; z-index: 5; }
+  </style>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <canvas id="hud"></canvas>
+
+  <button id="menuBtn" title="操作方法と設定 (Tab)">⚙ 操作・設定 <kbd>Tab</kbd></button>
+
+  <div id="overlay">
+    <div class="panel">
+      <h1>STARWAKE</h1>
+      <p class="sub" id="menuSub">M5 — 無限の宇宙</p>
+
+      <div class="cols">
+        <section>
+          <h2>操作方法</h2>
+          <table>
+            <tr><th>マウス</th><td>機首の上下・左右（仮想スティック）</td></tr>
+            <tr><th>Q / E</th><td>ロール</td></tr>
+            <tr><th>W / S</th><td>スロットル 上げ / 下げ（逆噴射まで）</td></tr>
+            <tr><th>X</th><td>スロットル 0</td></tr>
+            <tr><th>A / D ・ R / F</th><td>左右 ・ 上下スラスター</td></tr>
+            <tr><th>Shift</th><td>ブースト</td></tr>
+            <tr><th>J</th><td>巡航モード ON / OFF（天体から遠いほど高速。恒星間も飛べる）</td></tr>
+            <tr><th>M</th><td>星図（行き先を選ぶ）</td></tr>
+            <tr><th>B</th><td>行き先を切り替え（今の星系の天体を近い順に）</td></tr>
+            <tr><th>K</th><td>ジャンプ（行き先が別の恒星のとき）</td></tr>
+            <tr><th>左クリック</th><td>機関砲</td></tr>
+            <tr><th>Space</th><td>ミサイル（ロックオン後）</td></tr>
+            <tr><th>T / Y</th><td>的を選ぶ（機首に近い敵 / 次の敵）</td></tr>
+            <tr><th>N</th><td>敵の増援を呼ぶ</td></tr>
+            <tr><th>G</th><td>着陸装置 出す / しまう</td></tr>
+            <tr><th>H</th><td>ホバー（垂直離着陸）ON / OFF</td></tr>
+            <tr><th>Z</th><td>フライトアシスト ON / OFF</td></tr>
+            <tr><th>V</th><td>視点切り替え（コックピット / 追従）</td></tr>
+            <tr><th>右ドラッグ</th><td>見回す</td></tr>
+            <tr><th>C / 中クリック</th><td>マウススティックを中央に戻す</td></tr>
+            <tr><th>I</th><td>マウス上下の反転</td></tr>
+            <tr><th>矢印キー</th><td>機首（マウスの代わり）</td></tr>
+            <tr><th>Tab / Esc</th><td>このメニュー（一時停止）</td></tr>
+          </table>
+          <p class="note">大気中: スロットルは推力になり、翼の揚力で飛びます（失速 約70 m/s）。<kbd>H</kbd> のホバー中はスロットルが目標速度になり、<kbd>R</kbd>/<kbd>F</kbd> で上昇・下降、手を離すと空中で止まります。着陸は <kbd>G</kbd> で脚を出し、降下率 7 m/s 以下で接地。</p>
+          <p class="note">戦闘: 的を機首から25°以内に捉え続けるとロックオン。緑の丸（見越し点）に十字を重ねて撃つと当たります。シールドは4秒被弾しなければ回復、機体（HULL）とミサイルは着陸して数秒止まると回復します。</p>
+          <p class="note">ゲームパッド: 左スティック=ロール/ピッチ、右スティック=ヨー/上下、RT/LT=スロットル、A=ブースト、X=アシスト、Y=視点、B=着陸装置、LB=ホバー、RB=機関砲、左スティック押し込み=的、右スティック押し込み=ミサイル</p>
+        </section>
+
+        <section>
+          <h2>設定</h2>
+          <div id="settings"></div>
+          <button id="resetSettings" class="minor">初期値に戻す</button>
+          <p class="note">設定はこのブラウザに保存されます。</p>
+        </section>
+      </div>
+
+      <button id="start">クリックして開始</button>
+    </div>
+  </div>
+
+  <div id="starmap" class="hidden">
+    <div class="panel">
+      <h1>星図</h1>
+      <p class="sub" id="mapSub"></p>
+      <div class="cols">
+        <section>
+          <h2 id="mapSystemTitle">この星系</h2>
+          <div id="mapBodies" class="maplist"></div>
+        </section>
+        <section>
+          <h2>近くの恒星</h2>
+          <canvas id="mapCanvas" width="360" height="240"></canvas>
+          <div id="mapStars" class="maplist"></div>
+        </section>
+      </div>
+      <p class="note">行き先を選ぶと HUD に目印と距離が出ます。巡航（<kbd>J</kbd>）でそのまま飛ぶか、別の恒星なら <kbd>K</kbd> でジャンプできます。<kbd>M</kbd> / <kbd>Esc</kbd> で閉じる。</p>
+      <button id="mapClose">閉じる</button>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

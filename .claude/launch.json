@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "spaceflightsim",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["C:\\MyDevelop\\ClaudeCodeMySpace\\SpaceFlightSim\\serve.py", "5173"],
+      "port": 5173
+    }
+  ]
+}

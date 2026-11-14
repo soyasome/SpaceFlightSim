@@ -1,0 +1,915 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STARWAKE 技術解説</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}]})"></script>
+<style>
+:root {
+  --bg: #f7f8fa; --panel: #ffffff; --ink: #1c2330; --muted: #5d6878; --line: #d9dee6;
+  --accent: #1f6fd0; --accent2: #c2571a; --good: #1d8a5a; --warn: #b3261e;
+  --code-bg: #eef1f5; --soft: #e8f0fb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e131b; --panel: #161d28; --ink: #e3e8f0; --muted: #94a0b3; --line: #2a3443;
+    --accent: #6fb1ff; --accent2: #f0a063; --good: #5fd0a0; --warn: #ff8a80;
+    --code-bg: #1b2431; --soft: #18273b;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.85 "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+}
+.layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; }
+nav {
+  position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+  padding: 28px 18px; border-right: 1px solid var(--line); font-size: 14px; line-height: 1.5;
+}
+nav .brand { font-weight: 700; letter-spacing: .12em; font-size: 15px; }
+nav .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+nav ol { list-style: none; margin: 0; padding: 0; counter-reset: ch -1; }
+nav li { counter-increment: ch; }
+nav a {
+  display: flex; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--ink); text-decoration: none;
+}
+nav a::before { content: counter(ch); color: var(--muted); font-variant-numeric: tabular-nums; width: 1em; }
+nav a:hover, nav a.on { background: var(--soft); color: var(--accent); }
+main { padding: 36px 40px 120px; min-width: 0; }
+header.top h1 { font-size: 34px; line-height: 1.3; margin: 0 0 6px; letter-spacing: .02em; }
+header.top p { color: var(--muted); margin: 0 0 8px; max-width: 46em; }
+section { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 28px; }
+h2 { font-size: 25px; line-height: 1.4; margin: 0 0 4px; }
+h2 .no { color: var(--accent); margin-right: .5em; font-variant-numeric: tabular-nums; }
+.lead { color: var(--muted); margin: 0 0 18px; }
+h3 { font-size: 18px; margin: 34px 0 6px; }
+p, ul, ol.steps { max-width: 46em; }
+a { color: var(--accent); }
+code { background: var(--code-bg); border-radius: 4px; padding: .08em .35em; font: 0.88em/1.5 Consolas, "Cascadia Mono", Menlo, monospace; }
+pre {
+  background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; font: 13px/1.6 Consolas, "Cascadia Mono", Menlo, monospace; max-width: 52em;
+}
+pre code { background: none; padding: 0; font: inherit; }
+.src { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+.src a { margin-right: .7em; white-space: nowrap; }
+.problem, .cut {
+  border-left: 4px solid var(--accent2); background: var(--panel); border-radius: 0 8px 8px 0;
+  padding: 10px 16px; margin: 14px 0; max-width: 46em;
+}
+.cut { border-left-color: var(--muted); }
+.problem b:first-child, .cut b:first-child { display: block; font-size: 12px; letter-spacing: .1em; color: var(--accent2); }
+.cut b:first-child { color: var(--muted); }
+.problem p, .cut p, .cut ul { margin: 2px 0; }
+figure {
+  margin: 20px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; max-width: 52em;
+}
+figcaption { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin-top: 10px; }
+svg { display: block; width: 100%; height: auto; }
+svg text { fill: var(--ink); font: 13px "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; }
+svg .m { fill: var(--muted); } svg .a { fill: var(--accent); } svg .b { fill: var(--accent2); }
+svg .box { fill: var(--soft); stroke: var(--accent); stroke-width: 1.2; }
+svg .box2 { fill: none; stroke: var(--line); stroke-width: 1.2; }
+svg .ln { stroke: var(--ink); stroke-width: 1.3; fill: none; }
+svg .lm { stroke: var(--muted); stroke-width: 1.1; fill: none; }
+svg .la { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+svg .lb { stroke: var(--accent2); stroke-width: 1.8; fill: none; }
+svg .dash { stroke-dasharray: 5 4; }
+.demo .controls { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; margin-bottom: 12px; font-size: 14px; }
+.demo label { display: flex; align-items: center; gap: 8px; }
+.demo input[type=range] { width: 170px; accent-color: var(--accent); }
+.demo output, .demo .val { font-variant-numeric: tabular-nums; color: var(--accent); min-width: 5.5em; }
+.demo canvas { display: block; width: 100%; height: auto; border-radius: 6px; background: var(--code-bg); touch-action: none; }
+.demo button {
+  font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); cursor: pointer;
+}
+.demo button:hover { border-color: var(--accent); color: var(--accent); }
+.tag { display: inline-block; font-size: 11px; letter-spacing: .1em; color: var(--accent); border: 1px solid var(--accent); border-radius: 99px; padding: 0 8px; margin-bottom: 8px; }
+.readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.readout div { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; }
+.readout small { display: block; color: var(--muted); font-size: 12px; }
+.readout strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+.tablewrap { overflow-x: auto; max-width: 52em; }
+table { border-collapse: collapse; font-size: 14px; line-height: 1.55; width: 100%; }
+th, td { border-bottom: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.note { color: var(--muted); font-size: 13.5px; }
+#offline { display: none; color: var(--warn); font-size: 13.5px; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 16px; }
+  nav ol { display: flex; flex-wrap: wrap; gap: 2px; }
+  main { padding: 24px 16px 80px; }
+  header.top h1 { font-size: 27px; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="brand">STARWAKE</div>
+  <div class="sub">技術解説</div>
+  <ol>
+    <li><a href="#s0">全体像</a></li>
+    <li><a href="#s1">時間の進め方</a></li>
+    <li><a href="#s2">巨大スケールと精度</a></li>
+    <li><a href="#s3">剛体と飛行モデル</a></li>
+    <li><a href="#s4">無限の宇宙の自動生成</a></li>
+    <li><a href="#s5">地形生成</a></li>
+    <li><a href="#s6">惑星の LOD</a></li>
+    <li><a href="#s7">描画技術</a></li>
+    <li><a href="#s8">戦闘</a></li>
+    <li><a href="#s9">周辺技術</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <h1>STARWAKE の内部で<br>使っているアルゴリズムと技術</h1>
+  <p>地表 1 m の凹凸から数光年先の恒星までを、ひと続きの空間として飛べるようにするための仕組みを、章ごとに「何が問題か → どう解いたか → 実装の要点 → 割り切った点」の順で説明します。</p>
+  <p class="note">図の中の「動かせるデモ」は、ゲーム本体のコードをそのまま読み込んで動いています。<code>python serve.py</code> で起動し、<code>http://localhost:5173/docs/</code> から開いてください。</p>
+  <p id="offline">このページはファイルを直接開いているため、ゲーム本体のコードを読み込むデモ (銀河・地形) は動きません。</p>
+</header>
+
+<!-- ============================================================ 0 -->
+<section id="s0">
+<h2><span class="no">0</span>全体像</h2>
+<p class="lead">ビルドなしの ES モジュールと Three.js だけで、約 8,000 行。</p>
+<p class="src"><a href="../src/main.js">src/main.js</a><a href="../src/game.js">src/game.js</a></p>
+
+<p>ブラウザが <code>index.html</code> を読み、import map で Three.js (0.170) を CDN から取得し、<code>src/main.js</code> が <code>Game</code> を 1 つ作って開始します。バンドラーもトランスパイラーも使っていません。</p>
+
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="モジュール構成">
+  <rect class="box" x="290" y="14" width="180" height="46" rx="8"/><text x="380" y="34" text-anchor="middle" font-weight="700">game.js</text><text class="m" x="380" y="51" text-anchor="middle">全体の進行と座標系の管理</text>
+  <g>
+    <rect class="box2" x="10" y="110" width="170" height="78" rx="8"/><text x="22" y="131" font-weight="700">時間と入力</text><text class="m" x="22" y="150">core/loop, input</text><text class="m" x="22" y="168">core/settings</text>
+    <rect class="box2" x="200" y="110" width="170" height="78" rx="8"/><text x="212" y="131" font-weight="700">物理と飛行</text><text class="m" x="212" y="150">physics/body, frame</text><text class="m" x="212" y="168">flight/ship, aero, ground</text>
+    <rect class="box2" x="390" y="110" width="170" height="78" rx="8"/><text x="402" y="131" font-weight="700">宇宙と地形 (計算のみ)</text><text class="m" x="402" y="150">universe/galaxy, system</text><text class="m" x="402" y="168">terrain/noise, terrainFn</text>
+    <rect class="box2" x="580" y="110" width="170" height="78" rx="8"/><text x="592" y="131" font-weight="700">戦闘</text><text class="m" x="592" y="150">combat/combat, ai</text><text class="m" x="592" y="168">projectiles, targeting</text>
+    <rect class="box2" x="105" y="212" width="170" height="78" rx="8"/><text x="117" y="233" font-weight="700">惑星の描画</text><text class="m" x="117" y="252">planet/planetLod</text><text class="m" x="117" y="270">atmosphere, scatter</text>
+    <rect class="box2" x="295" y="212" width="170" height="78" rx="8"/><text x="307" y="233" font-weight="700">その他の描画と視点</text><text class="m" x="307" y="252">render/*, camera</text><text class="m" x="307" y="270">combat/effects</text>
+    <rect class="box2" x="485" y="212" width="170" height="78" rx="8"/><text x="497" y="233" font-weight="700">表示と音</text><text class="m" x="497" y="252">ui/hud, starmap, menu</text><text class="m" x="497" y="270">audio/sound</text>
+  </g>
+  <path class="lm" d="M330 60 L95 110 M360 60 L285 110 M400 60 L475 110 M430 60 L665 110"/>
+  <path class="lm dash" d="M190 188 V212 M380 188 V212 M570 188 V212"/>
+</svg>
+<figcaption><code>universe/</code> と <code>terrain/</code> は Three.js に依存しない純粋な計算です。そのため Web Worker の中でも、ブラウザ上の単体テストでも、このページのデモでも同じコードが動きます。</figcaption>
+</figure>
+
+<h3>1 フレームの流れ</h3>
+<ol class="steps">
+  <li><b>入力</b>をまとめて操縦入力 (ピッチ・ヨー・ロール・スロットルなど、すべて −1〜1) にする。</li>
+  <li><b>物理</b>を 1/120 秒刻みで必要な回数だけ進める。環境 (重力・空気密度) を求め、推力・空気力・接地反力をかけて積分し、座標系の切り替えと原点の付け替えを判定し、敵・弾・ミサイルを進める。</li>
+  <li><b>描画</b>を 1 回行う。物理ステップ間を補間した姿勢からカメラを決め、すべての物の位置からカメラ位置を引き、惑星の LOD を更新して描き、最後に HUD を 2D キャンバスに描く。</li>
+</ol>
+</section>
+
+<!-- ============================================================ 1 -->
+<section id="s1">
+<h2><span class="no">1</span>時間の進め方</h2>
+<p class="lead">物理は固定の刻み、描画は画面の更新に合わせる。</p>
+<p class="src"><a href="../src/core/loop.js">src/core/loop.js</a><a href="../src/physics/body.js">src/physics/body.js</a></p>
+
+<div class="problem"><b>何が問題か</b><p>画面の更新間隔 (60 Hz、144 Hz、処理落ち時はもっと遅い) をそのまま物理の刻み幅にすると、環境によって操縦の効きやばねの跳ね方が変わり、刻みが粗いと着陸装置のばねが発散します。</p></div>
+
+<p>描画フレームごとに経過時間を「貯金」(<code>acc</code>) に足し、貯金が 1/120 秒以上ある間だけ物理を 1 ステップずつ進めます。残った端数は捨てずに次のフレームへ持ち越します。</p>
+
+<pre><code>const dt = Math.min((now - this.last) / 1000, 0.1); // タブ復帰時などの飛びを抑える
+this.acc += dt;
+while (this.acc >= this.h) {      // h = 1/120 秒
+  this.step(this.h);
+  this.acc -= this.h;
+}
+this.frame(this.acc / this.h, dt); // alpha = 次のステップまでの進み具合 (0..1)</code></pre>
+
+<figure>
+<svg viewBox="0 0 760 150" role="img" aria-label="固定ステップと描画の補間">
+  <line class="lm" x1="30" y1="60" x2="730" y2="60"/>
+  <g class="ln"><path d="M60 50v20M180 50v20M300 50v20M420 50v20M540 50v20M660 50v20"/></g>
+  <text class="m" x="60" y="40" text-anchor="middle">物理 n</text><text class="m" x="180" y="40" text-anchor="middle">n+1</text><text class="m" x="300" y="40" text-anchor="middle">n+2</text><text class="m" x="420" y="40" text-anchor="middle">n+3</text><text class="m" x="540" y="40" text-anchor="middle">n+4</text><text class="m" x="660" y="40" text-anchor="middle">n+5</text>
+  <g class="lb"><path d="M132 60v44M348 60v44M588 60v44"/></g>
+  <text class="b" x="132" y="122" text-anchor="middle">描画</text><text class="b" x="348" y="122" text-anchor="middle">描画</text><text class="b" x="588" y="122" text-anchor="middle">描画</text>
+  <path class="la" d="M300 78 H348"/><text class="a" x="324" y="94" text-anchor="middle">alpha</text>
+  <text class="m" x="120" y="142" text-anchor="middle">1/120 秒</text><path class="lm" d="M60 132 H180"/>
+</svg>
+<figcaption>描画の瞬間は物理ステップの途中に落ちます。直前 2 つの状態を <code>alpha</code> で補間して描くので、物理 120 Hz・画面 60 Hz や 144 Hz でも動きがなめらかです。</figcaption>
+</figure>
+
+<p>剛体は 1 つ前の位置と向きを覚えていて、描画用の姿勢は位置を線形補間、向きを球面線形補間 (slerp) で求めます。</p>
+
+<div class="cut"><b>割り切った点</b><p>1 フレームの経過時間は 0.1 秒で頭打ちにしています。長く止まった後は、その分だけゲーム内の時間が遅れます (追いつこうとして物理を何百回も回すより安全です)。</p></div>
+</section>
+
+<!-- ============================================================ 2 -->
+<section id="s2">
+<h2><span class="no">2</span>巨大スケールと精度</h2>
+<p class="lead">このゲームの技術の中心。数値を常に「小さいまま」扱う。</p>
+<p class="src"><a href="../src/game.js">src/game.js</a><a href="../src/physics/frame.js">src/physics/frame.js</a><a href="../src/camera/cameraRig.js">src/camera/cameraRig.js</a><a href="../src/render/dust.js">src/render/dust.js</a></p>
+
+<div class="problem"><b>何が問題か</b><p>浮動小数点数は、値が大きいほど表せる数の間隔が粗くなります。GPU が使う単精度 (float32) は有効数字が約 7 桁しかなく、JavaScript の倍精度 (float64) でも約 16 桁です。恒星を原点にメートルで座標を持つと、遠くでは機体が「がたがた」と飛び飛びに動きます。</p></div>
+
+<figure class="demo">
+<span class="tag">動かせるデモ</span>
+<div class="controls">
+  <label>原点からの距離 <input type="range" id="pDist" min="0" max="17" step="0.05" value="5.6"></label>
+  <span class="val" id="pDistV"></span>
+</div>
+<div class="readout">
+  <div><small>float32 で表せる最小の刻み (GPU)</small><strong id="pF32"></strong></div>
+  <div><small>float64 で表せる最小の刻み (CPU)</small><strong id="pF64"></strong></div>
+  <div><small>この距離にあるもの</small><strong id="pWhat" style="font-size:15px"></strong></div>
+</div>
+<figcaption>惑星 AURELIA の半径 (400 km) の時点で float32 の刻みは約 3 cm。1 天文単位では約 16 km。float64 でも 1 光年で 2 m になります。メートル単位の 1 つの座標系では足りません。</figcaption>
+</figure>
+
+<h3>解き方: 座標系を入れ子にして、乗り換える</h3>
+<p>位置を 1 つの座標で持つのをやめ、スケールごとに原点の違う座標系を重ねます。どの段でも、実際に計算する数値は小さく保たれます。</p>
+
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="座標系の階層">
+  <g font-size="13">
+  <rect class="box2" x="10" y="20" width="136" height="92" rx="8"/><text x="78" y="42" text-anchor="middle" font-weight="700">銀河座標</text><text class="m" x="78" y="62" text-anchor="middle">単位: 光年</text><text class="m" x="78" y="80" text-anchor="middle">恒星の位置</text><text class="m" x="78" y="98" text-anchor="middle">float64</text>
+  <rect class="box2" x="164" y="20" width="136" height="92" rx="8"/><text x="232" y="42" text-anchor="middle" font-weight="700">星系座標</text><text class="m" x="232" y="62" text-anchor="middle">恒星が原点 (m)</text><text class="m" x="232" y="80" text-anchor="middle">惑星・小惑星帯</text><text class="m" x="232" y="98" text-anchor="middle">float64</text>
+  <rect class="box" x="318" y="20" width="136" height="92" rx="8"/><text x="386" y="42" text-anchor="middle" font-weight="700">世界座標</text><text class="m" x="386" y="62" text-anchor="middle">原点が機体を追う</text><text class="m" x="386" y="80" text-anchor="middle">|位置| &lt; 10,000 km</text><text class="m" x="386" y="98" text-anchor="middle">float64</text>
+  <rect class="box" x="472" y="20" width="136" height="92" rx="8"/><text x="540" y="42" text-anchor="middle" font-weight="700">フレーム座標</text><text class="m" x="540" y="62" text-anchor="middle">宇宙: 世界座標</text><text class="m" x="540" y="80" text-anchor="middle">惑星の近く: 惑星と</text><text class="m" x="540" y="98" text-anchor="middle">一緒に回る座標</text>
+  <rect class="box" x="626" y="20" width="124" height="92" rx="8"/><text x="688" y="42" text-anchor="middle" font-weight="700">描画座標</text><text class="m" x="688" y="62" text-anchor="middle">カメラが原点</text><text class="m" x="688" y="80" text-anchor="middle">ここで初めて</text><text class="m" x="688" y="98" text-anchor="middle">float32 になる</text>
+  </g>
+  <g class="la"><path d="M146 66h18M300 66h18M454 66h18M608 66h18"/></g>
+  <text class="a" x="232" y="150" text-anchor="middle">別の恒星の方が</text><text class="a" x="232" y="168" text-anchor="middle">近くなったら乗り換え</text>
+  <text class="a" x="386" y="150" text-anchor="middle">10,000 km 離れたら</text><text class="a" x="386" y="168" text-anchor="middle">原点を機体へ移す</text>
+  <text class="a" x="540" y="150" text-anchor="middle">惑星半径の 6 倍で入り</text><text class="a" x="540" y="168" text-anchor="middle">6.6 倍で出る</text>
+  <text class="a" x="688" y="150" text-anchor="middle">毎フレーム</text><text class="a" x="688" y="168" text-anchor="middle">カメラ位置を引く</text>
+  <path class="lm dash" d="M232 112v22M386 112v22M540 112v22M688 112v22"/>
+  <text class="m" x="380" y="216" text-anchor="middle">物理は色のついた 3 つの座標系の中だけで動く。機体の座標は最大でも 10,000 km 程度 (float64 の刻みは 2 nm)。</text>
+</svg>
+</figure>
+
+<h3>Floating Origin (カメラを原点に置く)</h3>
+<p>物理の座標はすべて JavaScript の Number、つまり float64 です。float32 になるのは GPU に送る瞬間だけなので、<b>送る前に CPU の倍精度でカメラ位置を引きます</b>。カメラは常に原点にあり、近くの物ほど小さい数値、つまり高い精度で描かれます。遠くの物は粗くなりますが、遠いので画面上では見えません。</p>
+<p>同じ考え方を細部でも繰り返しています。</p>
+<ul>
+  <li><b>地形チャンク</b>: 頂点はチャンク中心からの相対位置 (float32)、中心だけを float64 で持つ。</li>
+  <li><b>宇宙塵</b>: 「カメラ位置 mod 400 m」を CPU の倍精度で計算してシェーダーに渡す。</li>
+  <li><b>地面の模様</b>: カメラ位置を 256 m と 8192 m の周期で折り返して渡し、シェーダー内のノイズを惑星に固定する。</li>
+  <li><b>レイと球の交差</b>: 大きな数どうしの引き算を避けるため、最接近点を経由して解く。</li>
+  <li><b>奥行き</b>: 1 m 先の機体と数十万 km 先の惑星が同じ画面に入るので、対数深度バッファを使う。</li>
+</ul>
+
+<h3>原点の付け替え</h3>
+<p>宇宙を飛んでいて機体が世界座標の原点から 10,000 km (<code>RECENTER = 1e7</code>) 離れたら、原点を機体の位置へ移します。機体・弾・敵・爆発の位置から同じ量を引き、天体の世界座標を「星系座標 − 原点」で計算し直します。見た目には何も起きません。</p>
+
+<h3>惑星と一緒に回る座標系</h3>
+<p>惑星は自転しています。慣性系のままだと地表が常に横へ流れていて、「地面に対して止まる」ことが難しくなります。そこで惑星半径の 6 倍より内側に入ったら、機体の状態を惑星ローカル座標に変換します (出るのは 6.6 倍。境目で行ったり来たりしないための幅です)。</p>
+\[ \mathbf{x}' = q^{-1}(\mathbf{x} - \mathbf{P}), \qquad \mathbf{v}' = q^{-1}\mathbf{v} - \boldsymbol{\omega}\times\mathbf{x}', \qquad q_{\text{機体}}' = q^{-1}\,q_{\text{機体}} \]
+<p>\(q\) は惑星の向き、\(\mathbf{P}\) は惑星の中心、\(\boldsymbol{\omega}\) は自転の角速度です。速度から \(\boldsymbol{\omega}\times\mathbf{x}'\) を引くことで、「地表と一緒に動いている」状態が速度 0 になります。カメラの向きと追従の遅れも同じ回転で変換するので、切り替えの瞬間に画面は飛びません。</p>
+
+<h3>星系の乗り換え</h3>
+<p>恒星から 0.2 光年以上離れると、30 ステップに 1 回、いちばん近い恒星を調べます。別の恒星までの距離が今の恒星までの 0.95 倍より近くなったら、前の星系の惑星を捨て、原点を新しい星系の座標に付け替えます。</p>
+
+<div class="cut"><b>割り切った点</b><ul>
+  <li>惑星ローカル座標の中では、遠心力とコリオリ力を省いています。自転が遅い (出発地の惑星で周期 2 時間) ので影響が小さく、操作が素直になります。</li>
+  <li>座標系が切り替わるとき、敵と弾はいったん片付けます。切り替わるのは惑星から遠い場所なので、目立ちません。</li>
+  <li>惑星は公転しません。星系座標での位置は固定です。</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 3 -->
+<section id="s3">
+<h2><span class="no">3</span>剛体と飛行モデル</h2>
+<p class="lead">宇宙船と航空機を、1 つの機体・1 つの物理で連続的につなぐ。</p>
+<p class="src"><a href="../src/physics/body.js">physics/body.js</a><a href="../src/flight/ship.js">flight/ship.js</a><a href="../src/flight/aero.js">flight/aero.js</a><a href="../src/flight/ground.js">flight/ground.js</a><a href="../src/flight/cruise.js">flight/cruise.js</a><a href="../src/flight/shipParams.js">flight/shipParams.js</a></p>
+
+<h3>6 自由度の剛体と半陰的オイラー法</h3>
+<p>機体は質量 12 t、主慣性モーメント (対角成分のみ) を持つ剛体です。1 ステップは次の順で進めます。</p>
+\[ \mathbf{v} \leftarrow \mathbf{v} + \frac{\mathbf{F}}{m}\,\Delta t, \qquad \mathbf{x} \leftarrow \mathbf{x} + \mathbf{v}\,\Delta t, \qquad \boldsymbol{\omega} \leftarrow \boldsymbol{\omega} + I^{-1}\boldsymbol{\tau}\,\Delta t, \qquad q \leftarrow q \cdot \Delta q(\boldsymbol{\omega}\Delta t) \]
+<p>先に速度を更新し、<b>更新後の速度</b>で位置を進めるのが「半陰的」オイラー法です。計算量は普通のオイラー法と同じですが、ばねのような振動する系でエネルギーが増え続けにくく、着陸装置が安定します。角速度は機体座標で持つので、回転のクォータニオンは右から掛けます。</p>
+
+<h3>フライトアシスト: 入力は「目標」、推力は制御器が決める</h3>
+<p>アシスト ON のとき、スティックは力ではなく<b>目標の角速度</b>を指示します。制御器は誤差に比例したトルクを出し、空気が機首を振ろうとするトルクも打ち消します。</p>
+\[ \tau = \operatorname{clamp}\!\Big( (\omega_{\text{目標}} - \omega)\,g\,I \;-\; \tau_{\text{空力}},\ \pm\,\alpha_{\max} I \Big), \qquad g = 9\ \text{s}^{-1} \]
+<p>スラスターの力に上限 (clamp) があるので、高速では空気の復元力に勝てなくなり、引ける迎角 (つまり G) に自然な上限が生まれます。</p>
+<p>並進も同じ形で、場所によって 2 つの操縦方法を混ぜます。</p>
+<div class="tablewrap"><table>
+<tr><th>操縦方法</th><th>スロットルの意味</th><th>使われる場所</th></tr>
+<tr><td>宇宙 / ホバー</td><td>目標速度。誤差 × 3 s⁻¹ の加速度を出し、重力も打ち消す</td><td>空気が薄い所、または <kbd>H</kbd></td></tr>
+<tr><td>航空機</td><td>推力そのもの。翼の揚力で飛ぶ</td><td>空気が濃い所</td></tr>
+</table></div>
+<p>混ぜる割合は空気密度から決めます。地球の海面の 1%〜8% の密度 (高度およそ 32 km〜18 km) にかけて smoothstep で 0 から 1 へ変わるので、大気圏に入ると操縦の感覚が切り替わりではなく徐々に移ります。</p>
+
+<h3>空気力</h3>
+<p>機体座標での対気速度から迎角 \(\alpha\) を求め、動圧 \(q=\tfrac12\rho V^2\) と翼面積 \(S\) から揚力と抗力を計算します。</p>
+\[ L = q\,S\,C_L(\alpha), \qquad D = q\,S\,C_D(\alpha, M) \]
+
+<figure>
+<svg id="clPlot" viewBox="0 0 760 260" role="img" aria-label="揚力係数と迎角"></svg>
+<figcaption>揚力係数。失速角 (約 18°) までは迎角に比例し、そこから 8° ほどの幅で「平板」の特性 \(0.9\sin 2\alpha\) へ移ります。±180° まで定義されているので、背面でも後ろ向きに落ちていても計算が破綻しません。曲線はゲームの調整値から描いています。</figcaption>
+</figure>
+
+<ul>
+  <li><b>抗力</b>: 最小抗力 + 誘導抗力 (\(k\,C_L^2\)) + 着陸装置 + 造波抵抗。造波抵抗はマッハ 0.85 から立ち上がり 1.15 で最大、それ以上は \(1/\sqrt{M}\) で減ります。海面での最高速度が約 400 m/s に落ち着くのはこの「音の壁」のためです。</li>
+  <li><b>風見安定</b>: 機首を進行方向へ戻すトルクと、回転を弱める減衰。</li>
+  <li><b>空力加熱</b>: 目標値を \(\sqrt{\rho/\rho_0}\,V^3\) に比例させ、一次遅れで追わせる。100% を超えた分が損傷になります。</li>
+</ul>
+
+<h3>接地: ばね・ダンパー・摩擦</h3>
+<p>脚 3 本と機体の数点 (腹・翼端・機首・背中) を接地点とし、地面にめり込んだ深さに比例する反力と、めり込む速さに比例する減衰をかけます。地面は、機体の真下と 2 m 離れた 2 点の標高から求めた<b>平面</b>で近似します。摩擦は「速度に比例、ただし \(\mu N\) で頭打ち」という形にして、止まる直前に力の向きが振動するのを防いでいます。高速で突っ込んだときのすり抜け防止として、機体の中心が地面に近づきすぎたら強制的に押し戻します。</p>
+
+<h3>巡航の速度則</h3>
+<p>巡航中の最高速は、いちばん近い天体 (惑星の地表または恒星の表面) までの距離 \(d\) だけで決まります。</p>
+\[ v_{\max} = 400\ \text{m/s} \times \max\!\Big(5,\ \frac{\min(d,\,10^6)}{3000} + \frac{\max(0,\ d-10^6)}{1200}\Big) \]
+<p>天体に向かって全開で飛ぶと \(\dot d = -d/7.5\) となり、距離は 7.5 秒ごとに \(1/e\) になります。どれだけ遠くから来ても、近づくにつれて同じ調子で減速し、地表の手前で通常の速度に戻ります。上限はないので、惑星間は約 2 分、5 光年先の恒星まで約 3.5 分です。</p>
+<p>巡航を切ったときは、速さを \(v(t)=v_0\,(v_{\text{終}}/v_0)^{t/T}\) (\(T=2.5\) 秒) に沿って落とします。毎秒同じ比率で減るので、光速の何倍からでも同じ 2.5 秒で 400 m/s になります。</p>
+
+<div class="cut"><b>割り切った点</b><ul>
+  <li>ジャイロ項 (\(\boldsymbol{\omega}\times I\boldsymbol{\omega}\)) を省略。操縦系が常に角速度を制御しているので、効果が見えません。</li>
+  <li>重力は「いま座標系に入っている惑星」の分だけ。宇宙空間では無重力で、軌道運動はありません。</li>
+  <li>巡航中は重力も空気も無視します。物理的な加速ではなく「ドライブ」という設定です。</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 4 -->
+<section id="s4">
+<h2><span class="no">4</span>無限の宇宙の自動生成</h2>
+<p class="lead">何も保存しない。場所から毎回同じものを計算する。</p>
+<p class="src"><a href="../src/universe/galaxy.js">universe/galaxy.js</a><a href="../src/universe/system.js">universe/system.js</a><a href="../src/math/random.js">math/random.js</a></p>
+
+<div class="problem"><b>何が問題か</b><p>どこまで飛んでも星があり、戻ってきたら同じ星がある宇宙にしたい。しかし無限の宇宙をデータとして持つことはできません。</p></div>
+
+<p>空間を一辺 10 光年の区画に分け、<b>区画の番号 (整数 3 つ) をハッシュして乱数の種にします</b>。種が同じなら乱数列は必ず同じなので、その区画の恒星は何度作っても同じになります。</p>
+
+<pre><code>export function sectorSeed(ix, iy, iz, salt = 0) {
+  let h = Math.imul(ix | 0, 73856093) ^ Math.imul(iy | 0, 19349663)
+        ^ Math.imul(iz | 0, 83492791) ^ Math.imul(salt + 1, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);   // ビットをよくかき混ぜる
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}</code></pre>
+
+<figure class="demo">
+<span class="tag">動かせるデモ (本体の galaxy.js を使用)</span>
+<div class="controls">
+  <button id="gL">← 西へ</button><button id="gR">東へ →</button><button id="gU">↑ 北へ</button><button id="gD">↓ 南へ</button>
+  <button id="gFar">1 万区画先へ</button><button id="gHome">出発地へ戻る</button>
+  <span class="val" id="gPos"></span>
+</div>
+<canvas id="gal" width="1040" height="520"></canvas>
+<figcaption>銀河を真上から見た図 (奥行き方向は 1 区画ぶん)。格子が 10 光年の区画です。どこへ移動しても星があり、戻ると同じ配置と同じ名前が現れます。</figcaption>
+</figure>
+
+<h3>区画の中身の決め方</h3>
+<ul>
+  <li>乱数生成器は <b>mulberry32</b>。32 ビットの状態 1 つだけの小さな生成器で、速く、種から完全に再現できます。</li>
+  <li>恒星の数は 0 個 25%、1 個 40%、2 個 25%、3 個 10%。</li>
+  <li>位置は、他の恒星から 1.5 光年以上離れた場所が見つかるまで最大 8 回引き直します。区画の端 0.75 光年には置かないので、隣の区画の恒星とも近づきすぎません。</li>
+  <li>種類は重み付きの抽選 (赤色矮星 42% 〜 青白色巨星 2%)。名前は音節の表から 2〜3 個つなげて作ります。</li>
+  <li>計算済みの区画は 4,000 個までキャッシュします。</li>
+</ul>
+
+<h3>星系</h3>
+<p>恒星ごとに決まる種から、惑星の数・種類 (海洋・砂漠・氷・溶岩・岩石・ガス巨星)・半径・自転周期・大気の色、衛星、小惑星帯、敵の哨戒隊を決めます。惑星は地形の種を持つだけで、地形そのものは近づいたときに初めて計算されます (次章)。出発地の HELIA 星系だけは手で配置してあります。</p>
+
+<div class="cut"><b>割り切った点</b><p>恒星の密度は銀河のどこでも同じで、渦巻きの腕や中心といった大きな構造はありません。背景の天の川は見た目だけの別の星空です。</p></div>
+</section>
+
+<!-- ============================================================ 5 -->
+<section id="s5">
+<h2><span class="no">5</span>地形生成</h2>
+<p class="lead">惑星の地形は「方向を入れると標高が返る関数」ひとつ。</p>
+<p class="src"><a href="../src/terrain/noise.js">terrain/noise.js</a><a href="../src/terrain/terrainFn.js">terrain/terrainFn.js</a></p>
+
+<p>地形のデータは持ちません。<code>height(x, y, z, minWL)</code> は、惑星中心から見た方向 (単位ベクトル) を受け取り、その方向の標高 (m) を返します。メッシュを作る Worker も、接地判定をするメインスレッドも、同じ定義から作った同じ関数を呼ぶので、<b>見えている地面と当たる地面が必ず一致します</b>。</p>
+
+<figure class="demo">
+<span class="tag">動かせるデモ (本体の terrainFn.js を使用)</span>
+<div class="controls">
+  <label>省く波長 minWL <input type="range" id="tWL" min="0" max="5" step="1" value="2"></label><span class="val" id="tWLv"></span>
+  <label>拡大 <input type="range" id="tZoom" min="0" max="7" step="1" value="0"></label><span class="val" id="tZoomV"></span>
+  <button id="tReset">全体に戻す</button>
+</div>
+<canvas id="ter" width="720" height="360"></canvas>
+<figcaption>出発地の惑星 AURELIA (半径 400 km) の標高関数を、緯度経度の地図として描いたもの。クリックした場所が中心になります。拡大してから minWL を大きくすると、大陸の形はそのままで細部だけが消えます。遠くの粗いメッシュはこうして軽く作られます。</figcaption>
+</figure>
+
+<h3>材料: パーリンノイズと fBm</h3>
+<p>土台は 3 次元のパーリンノイズです。格子点ごとに決まった勾配ベクトルを置き、5 次の補間 \(6t^5-15t^4+10t^3\) でなめらかにつなぎます。格子点の割り当て表は惑星の種でシャッフルするので、惑星ごとに違う地形になります。球面の方向ベクトルをそのまま 3 次元の入力にするので、<b>球のどこにも継ぎ目や極のゆがみができません</b>。</p>
+<p>これを周波数を約 2 倍、振幅を半分にしながら重ねたものが fBm (非整数ブラウン運動) です。</p>
+\[ \operatorname{fbm}(\mathbf{p}) = \sum_{i=0}^{n-1} \frac{1}{2^{i}}\ \operatorname{noise}(2.03^{\,i}\,\mathbf{p}) \]
+<p>重ねる回数 \(n\) は、波長が <code>minWL</code> より短くなる手前で打ち切ります: \(n = \lfloor\log_2(R/(f_0\cdot\text{minWL}))\rfloor + 1\)。</p>
+
+<h3>標高の組み立て</h3>
+<div class="tablewrap"><table>
+<tr><th>層</th><th>技法</th><th>ねらい</th></tr>
+<tr><td>ドメインワープ</td><td>ノイズを引く位置を、別のノイズで 0.2 だけずらす</td><td>海岸線や山脈が丸い塊ではなく、うねった形になる</td></tr>
+<tr><td>大陸</td><td>低周波の fBm + 陸の多さ (<code>land</code>)</td><td>標高 0 を境に海と陸が分かれる</td></tr>
+<tr><td>山脈</td><td>尾根ノイズ \((1-|n|)^2\) を、陸の内側と低周波のマスクの中だけに立てる</td><td>鋭い稜線が、帯状に連なる</td></tr>
+<tr><td>丘陵</td><td>侵食風の fBm (下記)</td><td>水に削られたような斜面</td></tr>
+<tr><td>クレーター</td><td>格子配置 (下記)。大気や水のある天体では浅くする</td><td>岩石天体らしい表面</td></tr>
+</table></div>
+
+<h3>侵食風のノイズ</h3>
+<p>本物の侵食シミュレーションは、周囲の広い範囲を何度も計算する必要があり、「1 点だけ評価する関数」にはできません。代わりに、ノイズの<b>解析的な勾配</b> (<code>noiseD</code> が値と一緒に返す) を使います。オクターブを重ねるとき、それまでに積もった斜面の急さ \(\mathbf{s}\) に応じて細部を弱めます。</p>
+\[ h \mathrel{+}= \frac{a_i\, n_i}{1 + 0.7\,|\mathbf{s}|^2}, \qquad \mathbf{s} \mathrel{+}= 0.75^{\,i}\ \nabla_{\!\text{水平}}\, n_i \]
+<p>急な斜面はなめらかに、尾根の上と谷底 (勾配が 0 に近い所) には細部が残ります。各オクターブの弱め方はそれより粗いオクターブだけで決まるので、細部を省いた粗いメッシュでも大きな形は変わりません。</p>
+
+<h3>クレーター</h3>
+<p>空間を立方体の格子に区切り、区画番号のハッシュで「クレーターがあるか・中心・半径・古さ」を決めます (銀河の恒星と同じ考え方)。評価する点のまわり 3×3×3 区画だけを調べれば、その点に届くクレーターがすべて見つかります。格子の細かさを 2.6 倍ずつ変えて 8 層重ねることで、大小さまざまなクレーターになります。小さいものはお椀形、大きいものは底が平らで壁が急になり、半径 8 km を超えると中央丘ができます。</p>
+
+<div class="cut"><b>割り切った点</b><ul>
+  <li>川や谷のような、水の流れがつながった地形は作れません (1 点評価の関数の限界)。</li>
+  <li>海面より下はメッシュでは平らな水面にします。海底の形は色 (浅瀬の明るさ) にだけ使います。</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 6 -->
+<section id="s6">
+<h2><span class="no">6</span>惑星の LOD</h2>
+<p class="lead">宇宙からは粗く、地表では頂点間隔 1.2 m まで細かく。</p>
+<p class="src"><a href="../src/planet/planetLod.js">planet/planetLod.js</a><a href="../src/terrain/chunkBuilder.js">terrain/chunkBuilder.js</a><a href="../src/terrain/terrainWorker.js">terrain/terrainWorker.js</a></p>
+
+<div class="problem"><b>何が問題か</b><p>半径 400 km の惑星を頂点間隔 1.2 m で全部メッシュにすると、頂点は約 1 兆個必要です。カメラの近くだけを細かくする仕組み (LOD: Level of Detail) が要ります。</p></div>
+
+<h3>キューブ球と四分木</h3>
+<p>立方体の 6 面をそれぞれ格子に切り、各点を中心からの距離が 1 になるよう正規化して球面に押し出します (キューブ球)。緯度経度の格子と違って極に点が集まらず、各面が正方形なので四分木にそのまま載ります。</p>
+<p>各面は 1 枚のチャンク (32×32 マス) から始まり、カメラが近づくと 4 枚の子に分かれます。どの深さのチャンクも頂点数は同じで、覆う範囲が半分ずつになります。半径 400 km の惑星では 14 段で頂点間隔が約 1.2 m に達します。</p>
+
+<figure class="demo">
+<span class="tag">動かせるデモ</span>
+<div class="controls">
+  <label>カメラの高さ <input type="range" id="qAlt" min="0" max="100" step="1" value="35"></label><span class="val" id="qAltV"></span>
+  <span class="val" id="qCount"></span>
+</div>
+<canvas id="quad" width="1040" height="520"></canvas>
+<figcaption>立方体の 1 面を真上から見た図。マウスまたは指でカメラ (橙の点) を動かせます。四角 1 つがチャンク 1 枚で、どれも同じ頂点数です。分割の条件はゲームと同じ「チャンクまでの距離 &lt; チャンクの大きさ × 1.3」です。</figcaption>
+</figure>
+
+<pre><code>const k = SPLIT_K * (node.children ? MERGE_HYSTERESIS : 1);  // 1.3、分割済みなら × 1.15
+const wantSplit = node.level < this.maxLevel && d < node.size * k;</code></pre>
+<p>分割済みのノードには 1.15 倍の余裕を持たせます。境目のすぐそばを飛んでも、分割と統合が毎フレーム入れ替わることがありません。</p>
+
+<h3>穴と隙間を出さない工夫</h3>
+<ul>
+  <li><b>子が 4 枚そろってから切り替える</b>: 子のメッシュは Worker で作るので、できあがるまで時間がかかります。そろうまでは親を表示し続けます。</li>
+  <li><b>スカート</b>: 隣り合うチャンクの細かさが違うと、境目の頂点が合わずに隙間が見えます。各チャンクの縁から、惑星の中心方向へ帯 (チャンクの大きさの 5%、最低 2 m) を垂らして隙間をふさぎます。隣の細かさを調べて縁を縫い合わせる方法より、はるかに単純です。</li>
+  <li><b>法線の継ぎ目</b>: 法線は隣の頂点との差から求めます。チャンクの外側 1 周ぶんも標高を計算しておくので、縁の法線が隣のチャンクと一致し、明るさの段差が出ません。</li>
+</ul>
+
+<figure>
+<svg viewBox="0 0 760 170" role="img" aria-label="スカートによる隙間隠し">
+  <text class="m" x="190" y="20" text-anchor="middle">スカートなし</text>
+  <path class="la" d="M30 95 L70 80 L110 88 L150 70 L190 78"/>
+  <path class="lb" d="M190 92 L270 62 L350 84"/>
+  <path d="M190 78 L190 92" stroke="var(--warn)" stroke-width="3"/>
+  <text x="196" y="112" fill="var(--warn)" style="fill:var(--warn)">隙間</text>
+  <text class="a" x="60" y="125">細かいチャンク</text><text class="b" x="270" y="125" text-anchor="middle">粗いチャンク</text>
+  <text class="m" x="570" y="20" text-anchor="middle">スカートあり</text>
+  <path class="la" d="M410 95 L450 80 L490 88 L530 70 L570 78 L570 118"/>
+  <path class="lb" d="M570 132 L570 92 L650 62 L730 84 L730 124"/>
+  <path class="la" d="M410 95 L410 135"/>
+  <text class="m" x="578" y="150">縁を下へ垂らした帯が隙間の奥をふさぐ</text>
+</svg>
+</figure>
+
+<h3>Web Worker で裏で作る</h3>
+<p>チャンク 1 枚の生成は、標高関数を 35×35 回呼ぶ重い計算です。メインスレッドで行うと画面が止まるので、Worker (別スレッド) に任せます。</p>
+<ul>
+  <li>Worker の数は CPU のコア数 − 2 (2〜6 個)。全惑星で 1 組を共有します。</li>
+  <li>待ち行列からは <b>「距離 ÷ 大きさ」が最も小さい</b>チャンク、つまり画面で最も大きく見えるものを先に取り出します。</li>
+  <li>カメラが通り過ぎて不要になったチャンクの仕事は、順番が来た時点で捨てます。</li>
+  <li>できあがった頂点配列は Transferable として渡すので、スレッド間でコピーが起きません。</li>
+  <li>三角形のつなぎ方 (インデックス配列) は全チャンク共通で、1 つだけ作って使い回します。</li>
+</ul>
+
+<div class="cut"><b>割り切った点</b><p>LOD が切り替わるとき、形がわずかに「ぱっ」と変わります (ジオモーフィングなし)。チャンクが十分に小さく見える距離で切り替わるので、実際にはほとんど気になりません。</p></div>
+</section>
+
+<!-- ============================================================ 7 -->
+<section id="s7">
+<h2><span class="no">7</span>描画技術</h2>
+<p class="lead">空の色は絵ではなく、光の散乱の計算結果。</p>
+<p class="src"><a href="../src/planet/atmosphere.js">planet/atmosphere.js</a><a href="../src/planet/scatter.js">planet/scatter.js</a><a href="../src/render/starfield.js">render/starfield.js</a><a href="../src/render/nearStars.js">render/nearStars.js</a><a href="../src/render/dust.js">render/dust.js</a></p>
+
+<h3>大気散乱</h3>
+<div class="problem"><b>何が問題か</b><p>宇宙から見た青い縁、昼の青空、夕焼け、遠くの山のかすみ。これらを別々の演出として作ると、高度を変えたときにつながりません。</p></div>
+<p>これらはすべて、太陽光が空気の分子 (レイリー散乱) と微粒子 (ミー散乱) に当たって向きを変える、同じ現象です。視線に沿って大気の中を少しずつ進み、各点で「太陽からその点まで届いた光」が「カメラの方へ散乱される量」を足し合わせます。</p>
+
+<figure>
+<svg viewBox="0 0 760 290" role="img" aria-label="大気散乱の光路">
+  <circle cx="380" cy="560" r="330" fill="var(--soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <circle cx="380" cy="560" r="400" fill="none" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="5 4"/>
+  <text class="a" x="380" y="262" text-anchor="middle">惑星</text><text class="m" x="640" y="246">大気の上端</text>
+  <circle cx="110" cy="206" r="6" fill="var(--ink)"/><text x="62" y="228">カメラ</text>
+  <path class="ln" d="M110 206 L650 182"/><text class="m" x="668" y="186">視線</text>
+  <g fill="var(--accent2)"><circle cx="218" cy="201" r="4.5"/><circle cx="326" cy="196" r="4.5"/><circle cx="434" cy="192" r="4.5"/><circle cx="542" cy="187" r="4.5"/></g>
+  <g class="lb dash"><path d="M218 201 L320 40"/><path d="M326 196 L428 35"/><path d="M434 192 L536 31"/><path d="M542 187 L644 26"/></g>
+  <text class="b" x="560" y="20">太陽の方向へ</text>
+  <text class="m" x="110" y="150">各点で</text><text class="m" x="110" y="168">密度 × 減衰を足す</text>
+</svg>
+<figcaption>視線上の各点 (橙の点) から、さらに太陽の方向へ大気の中を進み、途中の空気の量 (光学的深さ) を求めます。光が長い距離を通るほど青が先に散乱されて失われるので、夕方の光は赤くなります。</figcaption>
+</figure>
+
+\[ L(\text{視線}) = I_{\text{太陽}} \sum_{i} \Big[ \beta_R\,P_R(\mu)\,\rho_R(h_i) + \beta_M\,P_M(\mu)\,\rho_M(h_i) \Big]\ e^{-\tau(\text{カメラ}\to i)\,-\,\tau(i\to\text{太陽})}\ \Delta s \]
+<ul>
+  <li>\(\rho(h)=e^{-h/H}\): 高度とともに薄くなる空気。スケールハイト \(H\) はレイリーが 7 km、ミーが 1.4 km。</li>
+  <li>\(\beta_R\): レイリー散乱係数。赤 5.2、緑 12.1、青 29.6 (×10⁻⁶ /m)。青が赤の約 6 倍散乱されることが、空が青い理由です。</li>
+  <li>\(P_R(\mu)=\tfrac{3}{16\pi}(1+\mu^2)\): 散乱の向きの偏り。\(\mu\) は視線と太陽方向のなす角の余弦。</li>
+  <li>\(P_M\): ミー散乱は前方に強く偏ります (\(g=0.76\))。太陽のまわりの白いにじみになります。</li>
+</ul>
+<p>この <code>scatter()</code> という 1 つの GLSL 関数を、<b>空 (大気の殻) のシェーダーと地表のシェーダーの両方</b>が使います。空では視線が大気を抜けるまで、地表ではカメラから地面までを積分し、地面の色に透過率を掛けて散乱光を足します。惑星ごとの違い (砂漠の黄土色の空、溶岩惑星の赤茶色の空) は、係数を変えるだけです。大気のない天体は係数 0 の大気として扱い、同じシェーダーを通します。</p>
+
+<h3>地面の細部</h3>
+<p>頂点間隔 1.2 m のメッシュと頂点色だけでは、近くで見るとのっぺりします。シェーダーの中でノイズを計算して、模様と凹凸を足しています。凹凸は、画面上の隣のピクセルとの差 (<code>dFdx</code>, <code>dFdy</code>) から高さの傾きを求めて法線を傾ける方法で、テクスチャも UV 座標も要りません。細かい模様ほど近くでだけ見せ、遠くではちらつくので消します。水面は、向きの違う 2 枚のノイズを流して波にし、太陽の反射・空の映り込み・波打ち際の白波を加えています。</p>
+
+<h3>岩と木</h3>
+<ul>
+  <li>地表をキューブ球の格子で区切り、区画番号のハッシュから置き場所を決めます (銀河・クレーターと同じ考え方)。離れて戻っても同じ木が同じ場所にあります。</li>
+  <li>同じ形を大量に描くので <b>InstancedMesh</b> を使い、形状 1 つと個体ごとの行列だけを GPU に渡します。</li>
+  <li>木は 350 m より遠くを<b>ビルボード</b> (絵を貼った板) に切り替え、3 km 先まで描きます。1 本につき、幹を軸にカメラへ回る縦の板と、真上から見た絵の水平な板の 2 枚を使うので、上空から見下ろしても木が線になりません。絵はメッシュの木と同じ形を canvas に描いて作ります。</li>
+</ul>
+
+<h3>宇宙の背景</h3>
+<ul>
+  <li><b>背景の星空</b>: カメラと一緒に動く点の集まり。無限遠にあるように見えます。</li>
+  <li><b>近くの恒星</b>: 銀河の生成結果から、実在する恒星を本当の方向に描きます。飛ぶと位置がずれて見え、近づいた恒星はそのまま太陽になります。</li>
+  <li><b>宇宙塵</b>: 何もない空間で速度感を出すための粒。400 m の立方体にばらまいた 1,400 個を、シェーダーの <code>mod</code> でカメラのまわりに無限に繰り返します。</li>
+</ul>
+
+<div class="cut"><b>割り切った点</b><ul>
+  <li>散乱は 1 回だけ考えます (多重散乱なし)。積分は毎ピクセル数十回の計算で、事前計算の表は使っていません。</li>
+  <li>影は、惑星の影に入ったかどうかだけ。地形や機体が落とす影はありません。</li>
+  <li>岩と木に当たり判定はありません。</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 8 -->
+<section id="s8">
+<h2><span class="no">8</span>戦闘</h2>
+<p class="lead">敵は特別扱いしない。同じ機体を、同じ操縦入力で飛ばす。</p>
+<p class="src"><a href="../src/combat/targeting.js">combat/targeting.js</a><a href="../src/combat/projectiles.js">combat/projectiles.js</a><a href="../src/combat/ai.js">combat/ai.js</a><a href="../src/combat/combat.js">combat/combat.js</a></p>
+
+<h3>見越し点</h3>
+<p>弾は実体として飛ぶので、動く的には「今いる場所」ではなく「弾が届く頃にいる場所」を狙う必要があります。弾は射手の速度に弾速 \(s\) を上乗せして飛ぶので、射手から見た相対位置 \(\mathbf{r}\)・相対速度 \(\mathbf{v}\) で考えると、命中の条件は次の式になります。</p>
+\[ |\mathbf{r} + \mathbf{v}\,t| = s\,t \quad\Longrightarrow\quad (\mathbf{v}\!\cdot\!\mathbf{v} - s^2)\,t^2 + 2(\mathbf{r}\!\cdot\!\mathbf{v})\,t + \mathbf{r}\!\cdot\!\mathbf{r} = 0 \]
+<p>この 2 次方程式の最小の正の解 \(t\) が命中までの時間で、見越し点は「的の位置 + 的の速度 × \(t\)」です。解がなければ、弾が的に追いつけません。</p>
+
+<figure class="demo">
+<span class="tag">動かせるデモ</span>
+<div class="controls">
+  <label>弾速 <input type="range" id="lS" min="200" max="1600" step="20" value="900"></label><span class="val" id="lSv"></span>
+  <label>的の速さ <input type="range" id="lV" min="0" max="700" step="10" value="320"></label><span class="val" id="lVv"></span>
+  <label>的の向き <input type="range" id="lA" min="0" max="360" step="2" value="250"></label><span class="val" id="lAv"></span>
+</div>
+<canvas id="lead" width="1040" height="440"></canvas>
+<figcaption>青が射手、橙が的、緑の丸が見越し点です。的はドラッグで動かせます。弾速を下げていくと、やがて解がなくなります。</figcaption>
+</figure>
+
+<p>HUD に出る緑の丸がこの点です。見越し点が機首から 2° 以内にあるとき、砲はそちらへ自動で向きます。</p>
+
+<h3>弾: 配列にまとめ、線分で当たりを調べる</h3>
+<ul>
+  <li>弾は数が多いので、1 発ずつオブジェクトにせず、位置・寿命・威力をそれぞれ 1 本の数値配列にまとめて持ちます。メモリの確保と解放が起きず、処理も速くなります。</li>
+  <li>弾は 1 ステップで数 m 進むので、「今の位置が的の中か」だけを調べると飛び越えてしまいます。<b>1 ステップで動いた線分と、的を包む球との交差</b>を調べます。</li>
+  <li>地形や小惑星との判定は重いので、6 ステップに 1 回、その間に動いた線分でまとめて調べます。</li>
+</ul>
+
+<h3>ミサイルの誘導</h3>
+<p>ミサイルは的までの距離と接近する速さから<b>残り時間</b> \(t_{go}\) を見積もり、「その時間で的に届く速度の向き」を求めます。</p>
+\[ t_{go} = \frac{|\mathbf{r}|}{v_{\text{接近}}}, \qquad \hat{\mathbf{d}}_{\text{目標}} = \operatorname{normalize}\!\Big(\frac{\mathbf{r}}{t_{go}} + \mathbf{v}_{\text{的}}\Big) \]
+<p>進行方向をこの向きへ回しますが、1 ステップに回せる角度は「横加速度 200 m/s² (約 20 G) ÷ 速さ」までです。速いほど曲がれないので、的が鋭く旋回すると振り切れます。的が進行方向から 60° 以上外れると見失い、そのまま直進します。</p>
+
+<h3>敵 AI</h3>
+<p>敵機は自機と同じ <code>Ship</code> クラスで、同じ空気力・同じ推力の上限で飛びます。AI は毎秒 20 回ほど判断して<b>操縦入力を書き換えるだけ</b>です。物理を無視した動きができないので、人間が見て納得できる飛び方になり、機体の調整値を変えれば敵の飛び方も一緒に変わります。</p>
+
+<figure>
+<svg viewBox="0 0 760 210" role="img" aria-label="敵AIの状態遷移">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+  <rect class="box2" x="20" y="76" width="130" height="56" rx="28"/><text x="85" y="100" text-anchor="middle" font-weight="700">哨戒</text><text class="m" x="85" y="118" text-anchor="middle">patrol</text>
+  <rect class="box" x="290" y="76" width="130" height="56" rx="28"/><text x="355" y="100" text-anchor="middle" font-weight="700">攻撃</text><text class="m" x="355" y="118" text-anchor="middle">attack</text>
+  <rect class="box2" x="600" y="14" width="140" height="56" rx="28"/><text x="670" y="38" text-anchor="middle" font-weight="700">回避</text><text class="m" x="670" y="56" text-anchor="middle">evade</text>
+  <rect class="box2" x="600" y="140" width="140" height="56" rx="28"/><text x="670" y="164" text-anchor="middle" font-weight="700">離脱</text><text class="m" x="670" y="182" text-anchor="middle">break</text>
+  <path class="lm" marker-end="url(#ar)" d="M150 104 H288"/><text class="m" x="219" y="94" text-anchor="middle">発見・被弾</text>
+  <path class="lm" marker-end="url(#ar)" d="M420 92 C490 70 540 50 598 44"/><text class="m" x="498" y="50" text-anchor="middle">撃たれた・後ろを取られた</text><text class="m" x="498" y="30" text-anchor="middle">ミサイル接近</text>
+  <path class="lm" marker-end="url(#ar)" d="M420 116 C490 138 540 158 598 164"/><text class="m" x="498" y="172" text-anchor="middle">300 m 以内に接近中</text>
+  <path class="lm dash" marker-end="url(#ar)" d="M600 60 C540 86 480 100 424 102"/>
+  <path class="lm dash" marker-end="url(#ar)" d="M600 150 C540 124 480 110 424 108"/>
+  <text class="m" x="560" y="110">1〜3 秒後に戻る</text>
+</svg>
+<figcaption>状態が決めるのは「行き先の方向」と「出したい速さ」だけです。その後に、状態によらず衝突回避が行き先を上書きします。</figcaption>
+</figure>
+
+<ul>
+  <li><b>行き先 → 操縦入力</b>: 行き先の方向を機体座標に直し、上下・左右のずれに比例してピッチとヨーを出します。大きく向きを変えるときは、人間と同じように「行き先が真上に来るまでロールしてから引く」動きをします。</li>
+  <li><b>狙いの積分項</b>: 動く的を比例制御だけで追うと、いつも少し遅れます。照準中 (ずれが 0.3 rad 以内) だけ誤差の積分を足して、遅れを消します (PI 制御)。</li>
+  <li><b>腕前</b>: 0〜1 の値で、狙いのぶれと撃ち始める角度が変わります。</li>
+  <li><b>ぶつからない</b>: 速さと降下角から、引き起こしに必要な高さ (約 6 G で回る円弧の落差) を計算し、足りなければ上昇を最優先にします。進む先の地面の高さと、近くの小惑星も調べます。</li>
+</ul>
+
+<div class="cut"><b>割り切った点</b><ul>
+  <li>敵どうしの連携 (挟み撃ちなど) はありません。1 機ずつ独立に判断します。</li>
+  <li>敵は巡航を使わず、60 km 離れると引っ込みます。座標系をまたぐ追跡はしません。</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 9 -->
+<section id="s9">
+<h2><span class="no">9</span>周辺技術</h2>
+<p class="lead">外部の素材ファイルは 1 つもない。</p>
+
+<div class="tablewrap"><table>
+<tr><th>項目</th><th>やっていること</th><th>ソース</th></tr>
+<tr><td>効果音</td><td>音声ファイルを使わず、Web Audio API で合成します。エンジン音や風切り音は発振器と、2 秒分を使い回す白色雑音にフィルターをかけたもの。推力・動圧・速度に応じて音量と高さを毎フレーム変えます。</td><td><a href="../src/audio/sound.js">audio/sound.js</a></td></tr>
+<tr><td>機体モデル</td><td>機体・小惑星・岩・木の形はすべてコードで作ります。小惑星の凹凸は頂点位置の関数でずらすので、継ぎ目が開きません。</td><td><a href="../src/render/shipModel.js">render/shipModel.js</a></td></tr>
+<tr><td>入力</td><td>キーボード・マウス・ゲームパッドを 1 つの操縦入力にまとめます。マウスは「仮想スティック」で、動かした分だけスティックが倒れ、戻すまで倒れたままです。</td><td><a href="../src/core/input.js">core/input.js</a></td></tr>
+<tr><td>視点</td><td>追従視点は、向きを指数関数的に遅れて追わせ、加速度に比例して位置をずらします。機体が先に動き、カメラが後から付いてくるので、動きが伝わります。</td><td><a href="../src/camera/cameraRig.js">camera/cameraRig.js</a></td></tr>
+<tr><td>設定</td><td>設定項目を配列で定義し、メニューの画面はその定義から自動で作ります。値は localStorage に保存します。</td><td><a href="../src/core/settings.js">core/settings.js</a></td></tr>
+<tr><td>HUD</td><td>3D とは別の 2D キャンバスに描きます。速さは m/s → km/s → 光速の何倍 → 光年毎秒、距離は m → km → 光秒 → 天文単位 → 光年と、桁に合わせて単位を切り替えます。</td><td><a href="../src/ui/hud.js">ui/hud.js</a></td></tr>
+<tr><td>テスト</td><td>テスト用のライブラリを使わず、ブラウザで <code>tests.html</code> を開くと単体テストが走ります。銀河や地形が Three.js に依存しないのは、ここで直接呼べるようにするためでもあります。</td><td><a href="../tests/harness.js">tests/</a></td></tr>
+</table></div>
+
+<h3>全体を通して繰り返し出てくる考え方</h3>
+<ul>
+  <li><b>場所から決める</b>: 恒星・クレーター・岩・木は、どれも「区画番号 → ハッシュ → 乱数の種」で決まります。保存も通信も要らず、どこまでも続きます。</li>
+  <li><b>数値を小さく保つ</b>: 基準点を近くに置き、差だけを単精度で扱います。座標系の階層、チャンクの中心、塵の位相、シェーダーの模様がすべてこの形です。</li>
+  <li><b>1 つの定義を共有する</b>: 標高関数は描画と当たり判定で、散乱の式は空と地表で、飛行モデルは自機と敵機で共有します。食い違いが原理的に起きません。</li>
+  <li><b>境目に幅を持たせる</b>: LOD の分割と統合、座標系の出入り、操縦方法の切り替えは、どれも境目に余裕やなめらかな移り変わりを入れて、ちらつきを防いでいます。</li>
+</ul>
+</section>
+</main>
+</div>
+
+<script>
+// ---------------------------------------------------------------- 共通
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const $ = (id) => document.getElementById(id);
+if (location.protocol === 'file:') $('offline').style.display = 'block';
+// スライダーと値の表示が別の行に分かれないよう、値をラベルの中へ入れる
+document.querySelectorAll('.controls label + .val').forEach((v) => v.previousElementSibling.append(v));
+
+// 目次の現在位置
+const links = [...document.querySelectorAll('nav a')];
+const io = new IntersectionObserver((es) => {
+  for (const e of es) if (e.isIntersecting) links.forEach((a) => a.classList.toggle('on', a.hash === '#' + e.target.id));
+}, { rootMargin: '-10% 0px -80% 0px' });
+document.querySelectorAll('section').forEach((s) => io.observe(s));
+
+function fmtLen(m) {
+  if (m < 1e-6) return (m * 1e9).toPrecision(2) + ' nm';
+  if (m < 1e-3) return (m * 1e6).toPrecision(2) + ' µm';
+  if (m < 1) return (m * 1e3).toPrecision(2) + ' mm';
+  if (m < 1e3) return m.toPrecision(3) + ' m';
+  if (m < 1e9) return (m / 1e3).toPrecision(3) + ' km';
+  if (m < 9.46e14) return (m / 1.496e11).toPrecision(3) + ' AU';
+  return (m / 9.4607e15).toPrecision(3) + ' 光年';
+}
+
+// ---------------------------------------------------------------- 2: 精度
+(function () {
+  const marks = [
+    [1, '機体のすぐそば'], [1e3, '近くの敵機'], [4e5, '惑星 AURELIA の半径'], [1e7, '原点を付け替える距離'],
+    [3.8e8, '地球と月の距離ほど'], [1.5e11, '恒星から 1 天文単位'], [5e12, '星系の外縁'], [9.46e15, '1 光年'], [5e16, '隣の恒星 (約 5 光年)'],
+  ];
+  function upd() {
+    const x = Math.pow(10, +$('pDist').value);
+    const e = Math.floor(Math.log2(x));
+    $('pDistV').textContent = fmtLen(x);
+    $('pF32').textContent = fmtLen(Math.pow(2, e - 23));
+    $('pF64').textContent = fmtLen(Math.pow(2, e - 52));
+    let w = marks[0][1];
+    for (const [d, name] of marks) if (x >= d * 0.7) w = name;
+    $('pWhat').textContent = w;
+  }
+  $('pDist').addEventListener('input', upd);
+  upd();
+})();
+
+// ---------------------------------------------------------------- 3: 揚力係数
+(function () {
+  const a = { cl0: 0, clAlpha: 3.5, stallAngle: 0.31, stallWidth: 0.14, plateLift: 0.9 }; // shipParams.js の値
+  const ss = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+  const cl = (al) => {
+    const s = ss(a.stallAngle, a.stallAngle + a.stallWidth, Math.abs(al));
+    return (a.cl0 + a.clAlpha * al) * (1 - s) + a.plateLift * Math.sin(2 * al) * s;
+  };
+  const W = 760, H = 260, L = 50, R = 20, T = 18, B = 40;
+  const X = (deg) => L + ((deg + 180) / 360) * (W - L - R);
+  const Y = (v) => T + ((1.3 - v) / 2.6) * (H - T - B);
+  let d = '';
+  for (let deg = -180; deg <= 180; deg += 0.5) d += (deg === -180 ? 'M' : 'L') + X(deg).toFixed(1) + ' ' + Y(cl(deg * Math.PI / 180)).toFixed(1);
+  const st = a.stallAngle * 180 / Math.PI, st2 = (a.stallAngle + a.stallWidth) * 180 / Math.PI;
+  let s = `<rect x="${X(st)}" y="${T}" width="${X(st2) - X(st)}" height="${H - T - B}" fill="var(--accent2)" opacity=".18"/>`;
+  s += `<rect x="${X(-st2)}" y="${T}" width="${X(-st) - X(-st2)}" height="${H - T - B}" fill="var(--accent2)" opacity=".18"/>`;
+  s += `<line class="lm" x1="${L}" y1="${Y(0)}" x2="${W - R}" y2="${Y(0)}"/><line class="lm" x1="${X(0)}" y1="${T}" x2="${X(0)}" y2="${H - B}"/>`;
+  for (const deg of [-180, -90, 0, 90, 180]) s += `<text class="m" x="${X(deg)}" y="${H - B + 18}" text-anchor="middle">${deg}°</text>`;
+  for (const v of [-1, 1]) s += `<text class="m" x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${v}</text><line class="lm dash" x1="${L}" y1="${Y(v)}" x2="${W - R}" y2="${Y(v)}" opacity=".5"/>`;
+  s += `<path class="la" d="${d}"/>`;
+  s += `<text class="b" x="${X(st2) + 6}" y="${T + 14}">失速へ移る範囲</text>`;
+  s += `<text class="m" x="${W - R}" y="${H - 4}" text-anchor="end">迎角 α</text><text class="m" x="${L - 36}" y="${T + 4}">揚力係数</text>`;
+  $('clPlot').innerHTML = s;
+})();
+
+// ---------------------------------------------------------------- 6: 四分木
+(function () {
+  const cv = $('quad'), g = cv.getContext('2d');
+  const MAXL = 9, K = 1.3;
+  let cam = { x: 0.62, y: 0.4 };
+  function draw() {
+    const W = cv.width, H = cv.height, S = H - 20, ox = (W - S) / 2, oy = 10;
+    const alt = Math.pow(+$('qAlt').value / 100, 2.2) * 0.6 + 0.0015;
+    $('qAltV').textContent = '面の一辺の ' + (alt * 100).toFixed(alt < 0.01 ? 2 : 1) + '%';
+    g.clearRect(0, 0, W, H);
+    const cols = [css('--line'), css('--accent')];
+    let count = 0;
+    g.lineWidth = 1;
+    (function visit(x, y, size, level) {
+      const dx = x + size / 2 - cam.x, dy = y + size / 2 - cam.y;
+      const d = Math.max(1e-6, Math.hypot(dx, dy, alt) - size * 0.5);
+      if (level < MAXL && d < size * K) {
+        const h = size / 2;
+        visit(x, y, h, level + 1); visit(x + h, y, h, level + 1); visit(x, y + h, h, level + 1); visit(x + h, y + h, h, level + 1);
+        return;
+      }
+      count++;
+      g.globalAlpha = 0.10 + 0.07 * level;
+      g.fillStyle = cols[1];
+      g.fillRect(ox + x * S, oy + y * S, size * S, size * S);
+      g.globalAlpha = 1;
+      g.strokeStyle = cols[0];
+      g.strokeRect(ox + x * S + 0.5, oy + y * S + 0.5, size * S, size * S);
+    })(0, 0, 1, 0);
+    g.fillStyle = css('--accent2');
+    g.beginPath(); g.arc(ox + cam.x * S, oy + cam.y * S, 7, 0, 7); g.fill();
+    $('qCount').textContent = 'チャンク ' + count + ' 枚 (全部を最細にすると ' + Math.pow(4, MAXL).toLocaleString() + ' 枚)';
+  }
+  function move(e) {
+    const r = cv.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width * cv.width, py = (e.clientY - r.top) / r.height * cv.height;
+    const S = cv.height - 20, ox = (cv.width - S) / 2;
+    cam.x = Math.min(1, Math.max(0, (px - ox) / S));
+    cam.y = Math.min(1, Math.max(0, (py - 10) / S));
+    draw();
+  }
+  cv.addEventListener('pointermove', move);
+  cv.addEventListener('pointerdown', move);
+  $('qAlt').addEventListener('input', draw);
+  draw();
+})();
+
+// ---------------------------------------------------------------- 8: 見越し点
+(function () {
+  const cv = $('lead'), g = cv.getContext('2d');
+  const SC = 0.42; // px / m
+  const shooter = { x: 150, y: 330 };
+  let target = { x: 760, y: 130 }, drag = false;
+  function draw() {
+    const s = +$('lS').value, v = +$('lV').value, ang = +$('lA').value * Math.PI / 180;
+    $('lSv').textContent = s + ' m/s'; $('lVv').textContent = v + ' m/s'; $('lAv').textContent = $('lA').value + '°';
+    const rx = (target.x - shooter.x) / SC, ry = (target.y - shooter.y) / SC;
+    const vx = Math.cos(ang) * v, vy = -Math.sin(ang) * v;
+    // targeting.js の leadPoint と同じ式 (射手は静止)
+    const a = vx * vx + vy * vy - s * s, b = 2 * (rx * vx + ry * vy), c = rx * rx + ry * ry;
+    let t = -1;
+    if (Math.abs(a) < 1e-9) { if (b < 0) t = -c / b; }
+    else {
+      const disc = b * b - 4 * a * c;
+      if (disc >= 0) {
+        const q = Math.sqrt(disc), t1 = (-b - q) / (2 * a), t2 = (-b + q) / (2 * a);
+        const lo = Math.min(t1, t2), hi = Math.max(t1, t2);
+        t = lo > 0 ? lo : hi > 0 ? hi : -1;
+      }
+    }
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.font = '22px sans-serif';
+    const ink = css('--ink'), mu = css('--muted'), A = css('--accent'), B = css('--accent2'), G = css('--good');
+    // 的の進路
+    g.strokeStyle = B; g.lineWidth = 2; g.setLineDash([8, 7]);
+    g.beginPath(); g.moveTo(target.x, target.y); g.lineTo(target.x + vx * SC * 3, target.y + vy * SC * 3); g.stroke();
+    g.setLineDash([]);
+    if (t > 0) {
+      const lx = target.x + vx * t * SC, ly = target.y + vy * t * SC;
+      g.strokeStyle = A; g.beginPath(); g.moveTo(shooter.x, shooter.y); g.lineTo(lx, ly); g.stroke();
+      g.strokeStyle = G; g.lineWidth = 3; g.beginPath(); g.arc(lx, ly, 13, 0, 7); g.stroke();
+      g.fillStyle = G; g.fillText('見越し点  ' + t.toFixed(2) + ' 秒後', lx + 20, ly - 12);
+      // 弾の到達範囲 (半径 s·t の円) の一部
+      g.strokeStyle = mu; g.lineWidth = 1; g.setLineDash([3, 6]);
+      g.beginPath(); g.arc(shooter.x, shooter.y, s * t * SC, 0, 7); g.stroke(); g.setLineDash([]);
+    } else {
+      g.fillStyle = css('--warn'); g.fillText('解なし: 弾が的に追いつけない', 30, 40);
+    }
+    g.fillStyle = A; g.beginPath(); g.arc(shooter.x, shooter.y, 10, 0, 7); g.fill();
+    g.fillStyle = ink; g.fillText('射手', shooter.x - 22, shooter.y + 38);
+    g.fillStyle = B; g.beginPath(); g.arc(target.x, target.y, 10, 0, 7); g.fill();
+    g.fillStyle = ink; g.fillText('的', target.x - 10, target.y - 20);
+  }
+  const pos = (e) => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * cv.width, y: (e.clientY - r.top) / r.height * cv.height }; };
+  cv.addEventListener('pointerdown', (e) => { drag = true; cv.setPointerCapture(e.pointerId); target = pos(e); draw(); });
+  cv.addEventListener('pointermove', (e) => { if (drag) { target = pos(e); draw(); } });
+  cv.addEventListener('pointerup', () => { drag = false; });
+  for (const id of ['lS', 'lV', 'lA']) $(id).addEventListener('input', draw);
+  draw();
+})();
+</script>
+
+<script type="module">
+// ゲーム本体のコードをそのまま使うデモ (銀河・地形)
+import { sectorStars, SECTOR } from '../src/universe/galaxy.js';
+import { makeTerrain } from '../src/terrain/terrainFn.js';
+
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- 4: 銀河
+{
+  const cv = $('gal'), g = cv.getContext('2d');
+  const NX = 8, NY = 4;
+  let sx = -4, sy = -2;
+  function draw() {
+    const W = cv.width, H = cv.height, cw = W / NX, ch = H / NY;
+    g.clearRect(0, 0, W, H);
+    g.strokeStyle = css('--line'); g.lineWidth = 1;
+    for (let i = 0; i <= NX; i++) { g.beginPath(); g.moveTo(i * cw, 0); g.lineTo(i * cw, H); g.stroke(); }
+    for (let j = 0; j <= NY; j++) { g.beginPath(); g.moveTo(0, j * ch); g.lineTo(W, j * ch); g.stroke(); }
+    g.font = '17px sans-serif';
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    for (let i = 0; i < NX; i++) for (let j = 0; j < NY; j++) {
+      const ix = sx + i, iy = sy + (NY - 1 - j);
+      for (const st of sectorStars(ix, iy, 0)) {
+        const x = (st.pos[0] / SECTOR - sx) * cw, y = H - (st.pos[1] / SECTOR - sy) * ch;
+        const c = st.color.map((v) => Math.round(255 * (dark ? v : v * 0.72)));
+        const r = 4 + 3.2 * Math.sqrt(st.radius / 6.96e8);
+        g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+        if (!dark) { g.strokeStyle = 'rgba(0,0,0,.45)'; g.stroke(); }
+        g.fillStyle = st.home ? css('--accent') : css('--muted');
+        if (st.home) g.fillText(st.name + ' (出発地)', x - 30, y - r - 8);
+        else g.fillText(st.name, x + r + 5, y + 6);
+      }
+    }
+    $('gPos').textContent = `区画 (${sx} 〜 ${sx + NX - 1}, ${sy} 〜 ${sy + NY - 1})`;
+  }
+  $('gL').onclick = () => { sx -= 2; draw(); };
+  $('gR').onclick = () => { sx += 2; draw(); };
+  $('gU').onclick = () => { sy += 1; draw(); };
+  $('gD').onclick = () => { sy -= 1; draw(); };
+  $('gFar').onclick = () => { sx += 10000; sy += 10000; draw(); };
+  $('gHome').onclick = () => { sx = -4; sy = -2; draw(); };
+  draw();
+}
+
+// ---------------------------------------------------------------- 5: 地形
+{
+  const cv = $('ter'), g = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const terrain = makeTerrain({ seed: 2024, radius: 400e3 }); // AURELIA
+  const WLS = [1, 300, 2000, 8000, 30000, 120000];
+  let lon0 = 0, lat0 = 0;
+  const img = g.createImageData(W, H);
+  const col = [0, 0, 0, 0];
+  const srgb = (v) => Math.round(255 * Math.pow(Math.min(1, Math.max(0, v)), 1 / 2.2));
+  let timer = 0;
+  function span() { return 360 / Math.pow(2, +$('tZoom').value); } // 表示する経度の幅 (度)
+  function draw() {
+    const minWL = WLS[+$('tWL').value];
+    const sp = span();
+    $('tWLv').textContent = minWL === 1 ? '省かない' : minWL >= 1000 ? minWL / 1000 + ' km 未満' : minWL + ' m 未満';
+    $('tZoomV').textContent = '幅 ' + Math.round(sp * Math.PI / 180 * 400) + ' km';
+    const rad = Math.PI / 180;
+    for (let j = 0; j < H; j++) {
+      const lat = Math.max(-89.9, Math.min(89.9, lat0 + (0.5 - j / H) * sp / 2)) * rad;
+      const cy = Math.cos(lat), y = Math.sin(lat);
+      for (let i = 0; i < W; i++) {
+        const lon = (lon0 + (i / W - 0.5) * sp) * rad;
+        const x = cy * Math.cos(lon), z = cy * Math.sin(lon);
+        const h = terrain.height(x, y, z, minWL);
+        terrain.color(col, h, 1, x, y, z);
+        // 標高で少し陰影を付けて起伏を見やすくする
+        const shade = h > 0 ? 0.75 + Math.min(0.5, h / 9000) : 1;
+        const o = (j * W + i) * 4;
+        img.data[o] = srgb(col[0] * shade); img.data[o + 1] = srgb(col[1] * shade); img.data[o + 2] = srgb(col[2] * shade); img.data[o + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+  }
+  const later = () => { clearTimeout(timer); timer = setTimeout(draw, 30); };
+  $('tWL').addEventListener('input', later);
+  $('tZoom').addEventListener('input', later);
+  $('tReset').onclick = () => { lon0 = 0; lat0 = 0; $('tZoom').value = 0; draw(); };
+  cv.addEventListener('click', (e) => {
+    const r = cv.getBoundingClientRect(), sp = span();
+    lon0 += ((e.clientX - r.left) / r.width - 0.5) * sp;
+    lat0 = Math.max(-80, Math.min(80, lat0 + (0.5 - (e.clientY - r.top) / r.height) * sp / 2));
+    if (+$('tZoom').value < 7) $('tZoom').value = +$('tZoom').value + 1;
+    draw();
+  });
+  draw();
+}
+</script>
+</body>
+</html>
