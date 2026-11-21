@@ -738,12 +738,29 @@ export class Game {
     this.boostVisual += ((ship.boosting ? 1 : 0) - this.boostVisual) * (1 - Math.exp(-dt * 4));
     this.rig.update(dt, this._sPos, this._sQuat, body.vel, this.input.look, this.boostVisual, ship.driving);
 
-    // カメラが地面にもぐらないようにする
+    // カメラが地面にもぐらないようにする。
+    // 真上へ持ち上げると崖の壁の中から崖の上へ飛び出すので、機体の方へ引き寄せる
     const cam = this.rig.pos;
     if (this.frame) {
-      const r = cam.length();
-      const minR = this.frame.groundRadiusAt(cam) + CAMERA_CLEARANCE;
-      if (r < minR) cam.multiplyScalar(minR / r);
+      const planet = this.frame;
+      const below = (p) => p.length() < planet.groundRadiusAt(p) + CAMERA_CLEARANCE;
+      if (below(cam)) {
+        const ship = this._sPos;
+        if (below(ship)) {
+          const r = cam.length();
+          cam.multiplyScalar((planet.groundRadiusAt(cam) + CAMERA_CLEARANCE) / r);
+        } else {
+          // 機体 (t = 0) とカメラ (t = 1) を結ぶ線上で、地面より上にある最も遠い点を二分探索する
+          const p = this._camProbe || (this._camProbe = new THREE.Vector3());
+          let lo = 0, hi = 1;
+          for (let k = 0; k < 10; k++) {
+            const mid = (lo + hi) / 2;
+            if (below(p.copy(ship).lerp(cam, mid))) hi = mid;
+            else lo = mid;
+          }
+          cam.copy(ship).lerp(cam, lo);
+        }
+      }
     }
 
     // --- フレーム座標 → 描画座標 ---

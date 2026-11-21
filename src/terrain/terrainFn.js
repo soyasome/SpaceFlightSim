@@ -15,6 +15,43 @@ const DEFAULT_TERRAIN = { type: 'terran', land: 0.05, cAmp: 2800, mAmp: 6500, hA
 const CRATER_DEFAULT = { rock: 1, ice: 0.3, desert: 0.35, lava: 0.2, terran: 0 };
 
 /**
+ * 渓谷と段丘 (メサ) の種類ごとの設定。
+ * canyon: 渓谷の網
+ *   freq   網目の細かさ (大きいほど渓谷どうしの間隔が狭い)
+ *   depth  深さ (m)
+ *   floor  谷底の半幅 (m)
+ *   wall   壁の水平方向の幅 (m)
+ *   steps  壁の段の数。段ごとに「崖 → 平らな棚」をくり返す
+ *   riser  段のうち崖が占める割合 (小さいほど崖が切り立つ)
+ *   cover  渓谷のある地域の広さ (0..1)
+ * mesa: 崖で囲まれた台地の重なり
+ *   freq   台地の大きさ (大きいほど小さな台地がたくさん)
+ *   tiers  段の数
+ *   tier   1段の高さ (m)
+ *   edge   崖の水平方向の半幅 (m)
+ *   cover  台地のある地域の広さ (0..1)
+ */
+const CLIFFS = {
+  desert: {
+    canyon: { freq: 5, depth: 1700, floor: 900, wall: 1800, steps: 4, riser: 0.3, cover: 0.65 },
+    mesa: { freq: 7, tiers: 3, tier: 260, edge: 40, cover: 0.55 },
+  },
+  rock: {
+    canyon: { freq: 4, depth: 650, floor: 300, wall: 600, steps: 1, riser: 0.35, cover: 0.4 },
+  },
+  ice: { // 細く深い割れ目
+    canyon: { freq: 6, depth: 1500, floor: 120, wall: 350, steps: 1, riser: 0.4, cover: 0.55 },
+  },
+  lava: {
+    canyon: { freq: 5, depth: 900, floor: 400, wall: 700, steps: 2, riser: 0.3, cover: 0.5 },
+    mesa: { freq: 6, tiers: 2, tier: 220, edge: 40, cover: 0.4 },
+  },
+  terran: { // 陸だけ。高緯度では谷底が海面より下まで削られてフィヨルドになる
+    canyon: { freq: 4.5, depth: 900, floor: 250, wall: 1000, steps: 3, riser: 0.3, cover: 0.45 },
+  },
+};
+
+/**
  * 惑星の地形を表す関数を作る。メインスレッド (接地判定) と Worker (メッシュ生成) の
  * 両方で同じ定義から作るので、見た目と当たり判定が一致する。
  *
@@ -26,6 +63,7 @@ const CRATER_DEFAULT = { rock: 1, ice: 0.3, desert: 0.35, lava: 0.2, terran: 0 }
  *   cAmp, mAmp, hAmp  大陸・山脈・丘の高さ (m)
  *   tint  色合い [r, g, b] (掛け算)
  *   craters  クレーターの深さの倍率 (省くと種類ごとの既定値。0 でなし)
+ *   canyons, mesas  渓谷・台地の倍率 (省くと 1。0 でなし。設定は種類ごとに CLIFFS)
  */
 export function makeTerrain(def) {
   const R = def.radius;
@@ -166,6 +204,116 @@ export function makeTerrain(def) {
     return sum;
   }
 
+  // --- 渓谷と台地 ---
+  // どちらも「なめらかなノイズの等値線」に沿って崖を立てる。
+  // 等値線までの距離を (値 ÷ 勾配の大きさ) で m 単位に直すので、ノイズがゆるやかな所でも
+  // 急な所でも、崖の幅 (= 急さ) を m で指定どおりにできる。
+  // 崖の幅は minWL より細くしない。粗いメッシュでは崖がなだらかになるが、形はずれない。
+  const CL = CLIFFS[type] || {};
+  const canyonCfg = CL.canyon && (T.canyons ?? 1) > 0 ? { ...CL.canyon, depth: CL.canyon.depth * (T.canyons ?? 1) } : null;
+  const mesaCfg = CL.mesa && (T.mesas ?? 1) > 0 ? { ...CL.mesa, tier: CL.mesa.tier * (T.mesas ?? 1) } : null;
+  const _fd = [0, 0, 0, 0];
+
+  /** fbm の値と勾配 (入力座標についての偏微分) を out = [値, ∂x, ∂y, ∂z] に入れる。 */
+  function fbmD(x, y, z, octaves, out) {
+    let a = 1, f = 1, s = 0, gx = 0, gy = 0, gz = 0;
+    for (let i = 0; i < octaves; i++) {
+      n.noiseD(x * f, y * f, z * f, _nd);
+      s += a * _nd[0];
+      gx += a * f * _nd[1]; gy += a * f * _nd[2]; gz += a * f * _nd[3];
+      f *= 2.03;
+      a *= 0.5;
+    }
+    out[0] = s; out[1] = gx; out[2] = gy; out[3] = gz;
+    return out;
+  }
+
+  /**
+   * 周波数 freq で引いたノイズ out (fbmD の結果) の等値線 (値 = level) までの
+   * 符号付きのおおよその距離 (m)。(x,y,z) は鉛直方向。
+   */
+  function isoDist(out, freq, level, x, y, z) {
+    let gx = out[1] * freq, gy = out[2] * freq, gz = out[3] * freq;
+    const r = gx * x + gy * y + gz * z;
+    gx -= r * x; gy -= r * y; gz -= r * z;
+    // 勾配がほぼ 0 の所 (ノイズの山頂や鞍部) で距離が発散しないよう、下限を設ける
+    const g = Math.max(Math.sqrt(gx * gx + gy * gy + gz * gz), 0.35 * freq);
+    return ((out[0] - level) / g) * R;
+  }
+
+  /**
+   * 段のある壁の高さの割合 (0 = 谷底, 1 = 縁)。u: 壁の中での位置 (0 = 谷底側, 1 = 縁)。
+   * 段ごとに、内側で崖が立ち上がり、外側は少し傾いた棚になる。
+   */
+  function stairs(u, steps, riser, segW, minWL) {
+    if (u <= 0) return 0;
+    if (u >= 1) return 1;
+    const q = u * steps;
+    const i = Math.floor(q), f = q - i;
+    // 崖は minWL の2倍 (頂点4つぶん) より細くしない。それより細いと、崖が頂点の格子を
+    // ジグザグに横切って櫛のような縞が出る。(代わりに、細かさの違うチャンクの境目で
+    // 崖の形が少し食い違う)
+    const r = Math.min(1, Math.max(riser, (2 * minWL) / segW));
+    const s = lerp(smooth(0, r, f), f, 0.15);
+    const stepped = (i + s) / steps;
+    // 段そのものがメッシュより細かいときは、ただの斜面にする
+    const blend = smooth(0.25, 0.5, minWL / segW);
+    return lerp(stepped, smooth(0, 1, u), blend);
+  }
+
+  /** 1つの渓谷の網が削る深さ (m, 0 以上)。 */
+  function canyonNet(px, py, pz, x, y, z, freq, depth, floor, wall, steps, riser, minWL) {
+    fbmD(px * freq, py * freq, pz * freq, 3, _fd);
+    const d = Math.abs(isoDist(_fd, freq, 0, x, y, z));
+    if (d >= floor + wall) return 0;
+    if (d <= floor) return depth;
+    const u = (d - floor) / wall;
+    return depth * (1 - stairs(u, steps, riser, wall / steps, minWL));
+  }
+
+  /** 渓谷が削る深さ (m, 0 以上)。 */
+  function canyons(x, y, z, minWL) {
+    const C = canyonCfg;
+    // 渓谷のある地域
+    const t = 0.6 * (0.5 - C.cover); // ノイズがこれを超える割合がおよそ cover
+    const region = smooth(t - 0.1, t + 0.1, fbm(x * 1.3 + 41.7, y * 1.3 - 12.3, z * 1.3 + 6.1, 2));
+    if (region < 0.001) return 0;
+    // 渓谷を蛇行させる
+    const W = 0.06;
+    const px = x + W * fbm(x * 3 + 7.7, y * 3 + 1.4, z * 3 - 9.2, 2);
+    const py = y + W * fbm(x * 3 - 3.3, y * 3 + 8.8, z * 3 + 2.6, 2);
+    const pz = z + W * fbm(x * 3 + 5.1, y * 3 - 6.4, z * 3 + 13.9, 2);
+    // 場所ごとに深さと幅を変える
+    const v1 = 0.5 + 0.5 * n.noise(x * 9 + 2.2, y * 9 + 17.5, z * 9 - 4.4);
+    const v2 = 0.5 + 0.5 * n.noise(x * 11 - 8.1, y * 11 + 3.9, z * 11 + 12.7);
+    const depth = C.depth * (0.55 + 0.7 * v1);
+    const floor = C.floor * (0.5 + 0.9 * v2);
+    const wall = C.wall * (0.7 + 0.6 * v1);
+    // 本流と、その半分ほどの深さの支流。重なった所は深い方を取る
+    const main = canyonNet(px + 3.7, py - 1.9, pz + 8.3, x, y, z, C.freq, depth, floor, wall, C.steps, C.riser, minWL);
+    const side = canyonNet(px - 6.1, py + 4.4, pz - 2.8, x, y, z, C.freq * 2.6, depth * 0.5, floor * 0.4, wall * 0.6,
+      Math.max(1, C.steps - 1), C.riser, minWL);
+    return Math.max(main, side) * region;
+  }
+
+  /** 台地が持ち上げる高さ (m, 0 以上)。 */
+  function mesas(x, y, z, minWL) {
+    const M = mesaCfg;
+    const t = 0.6 * (0.5 - M.cover);
+    const region = smooth(t - 0.1, t + 0.1, fbm(x * 1.7 - 23.4, y * 1.7 + 9.6, z * 1.7 + 31.2, 2));
+    if (region < 0.001) return 0;
+    const f = M.freq;
+    fbmD(x * f + 17.3, y * f - 5.5, z * f + 2.9, 3, _fd);
+    const w = Math.max(M.edge, minWL); // 崖の幅 2w は頂点4つぶん以上 (渓谷の段と同じ理由)
+    let sum = 0;
+    for (let k = 0; k < M.tiers; k++) {
+      const d = isoDist(_fd, f, -0.05 + k * 0.17, x, y, z);
+      // 上は切り立った崖、下は崩れた岩のなだらかな裾 (崖錐)
+      sum += 0.75 * smooth(-w, w, d) + 0.25 * smooth(-6 * w, w, d);
+    }
+    return sum * M.tier * region;
+  }
+
   /**
    * 単位ベクトル (x,y,z) の方向の標高 (m)。0 が海面で、負は海底。
    * minWL: これより短い波長の凹凸は省く。1 を渡すと最も細かい。
@@ -204,6 +352,22 @@ export function makeTerrain(def) {
       }
     }
 
+    if (mesaCfg) h += mesas(x, y, z, minWL);
+    if (canyonCfg) {
+      let carve = canyons(x, y, z, minWL);
+      if (type === 'terran') carve *= smooth(0.03, 0.2, land); // 海底は削らない
+      if (carve > 0) {
+        const cut = h - carve;
+        if (type === 'terran') {
+          // 谷底が海面より下になるのは高緯度 (フィヨルド) だけ。それ以外は乾いた谷にする
+          const lat = Math.abs(y);
+          const lowest = lerp(8, -450, smooth(0.6, 0.78, lat));
+          h = Math.max(cut, Math.min(h, lowest));
+        } else {
+          h = cut;
+        }
+      }
+    }
     if (craterAmount > 0) h += craters(x, y, z, minWL) * craterAmount;
     return h;
   }
@@ -300,7 +464,9 @@ export function makeTerrain(def) {
         r = lerp(0.64, 0.46, p); g = lerp(0.47, 0.27, p); b = lerp(0.28, 0.16, p); // 砂 → 赤い岩
         const t = smooth(60, 5, h); // 盆地の縁
         r = lerp(r, 0.62, t); g = lerp(g, 0.55, t); b = lerp(b, 0.42, t);
-        r = lerp(r, 0.34, steep); g = lerp(g, 0.22, steep); b = lerp(b, 0.16, steep);
+        // 崖の岩肌。地層の縞はシェーダーで描く
+        // (頂点色に入れると、崖では頂点ごとに縞の別の所を拾って、櫛のような模様になる)
+        r = lerp(r, 0.4, steep); g = lerp(g, 0.27, steep); b = lerp(b, 0.19, steep);
       }
       const frost = smooth(0.9, 0.97, lat + patch * 0.03); // 極の霜
       r = lerp(r, 0.85, frost); g = lerp(g, 0.84, frost); b = lerp(b, 0.82, frost);

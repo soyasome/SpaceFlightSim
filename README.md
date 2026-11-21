@@ -26,14 +26,15 @@ python serve.py
 
 - `src/core` ゲームループ、入力
 - `src/physics` 剛体
-- `src/flight` 機体と操縦系 (`shipParams.js` に調整値)、空力 (`aero.js`)、接地 (`ground.js`)
+- `src/flight` 機体と操縦系 (`shipParams.js` に調整値)、空力 (`aero.js`)、接地 (`ground.js`。接触点ごとに真下の地面を調べるので、崖の壁にも当たる)
 - `src/audio` 効果音 (Web Audio で合成)
 - `src/combat` 戦闘 (`combat.js` 全体の管理、`ai.js` 敵の操縦、`projectiles.js` 弾とミサイル、`targeting.js` 見越し計算、`effects.js` 演出)
 - `src/universe` 銀河 (`galaxy.js`) と星系 (`system.js`) の生成。three.js に依存しない
 - `src/camera` 視点
 - `src/render` 星空、塵、小惑星、機体モデル
 - `src/terrain` 地形 (ノイズ、標高関数、チャンク生成、Worker)。three.js に依存しない。
-  標高関数 (`terrainFn.js`) にはドメインワープ・侵食風ノイズ・クレーターが入っている
+  標高関数 (`terrainFn.js`) にはドメインワープ・侵食風ノイズ・クレーター・段のある渓谷・崖で囲まれた台地 (メサ) が入っている。
+  渓谷と台地の種類ごとの設定は `CLIFFS`
 - `src/planet` 惑星、LOD、大気シェーダー (地面の細かい凹凸と水面もここ)、地表に散らばる岩と木 (`scatter.js`。当たり判定なし。木は 350 m より遠くをビルボードで 3 km 先まで描く)
 - `src/ui` HUD
 - `tests` ブラウザで動く単体テスト

@@ -123,7 +123,7 @@ const R = 400e3;
 const FLAT = { groundRadiusAt: () => R };
 
 /** 平らな惑星の上で、エンジンを使わずに seconds 秒進める。受けた損傷の合計を返す。 */
-function ground(ship, seconds, brake) {
+function ground(ship, seconds, brake, planet = FLAT, onStep = null) {
   const gc = new GroundContact();
   const c = makeControls();
   const e = env({ rho: 0, aero: 0 });
@@ -131,11 +131,22 @@ function ground(ship, seconds, brake) {
   for (let i = 0; i < Math.round(seconds / H); i++) {
     e.gravity.copy(ship.body.pos).normalize().multiplyScalar(-G);
     ship.applyForces(H, c, e);
-    gc.apply(ship.body, FLAT, ship.gear, brake, H);
+    gc.apply(ship.body, planet, ship.gear, brake, H);
     damage += gc.damage;
     ship.body.integrate(H);
+    if (onStep) onStep(ship);
   }
   return { damage, gc };
+}
+
+/** z = zWall より先 (-Z 側) に、高さ wall (m) の崖がそびえる惑星。崖の水平方向の幅は width (m)。 */
+function cliffPlanet(zWall, wall, width) {
+  return {
+    groundRadiusAt(p) {
+      const t = Math.min(1, Math.max(0, (zWall - p.z) / width));
+      return R + wall * t * t * (3 - 2 * t);
+    },
+  };
 }
 
 function parked(height) {
@@ -186,6 +197,32 @@ test('着陸: ブレーキをかけると短い距離で止まり、かけなけ
   assert(braked.speed < 0.1, `止まらない: ${braked.speed}`);
   assert(braked.dist > 40 && braked.dist < 110, `制動距離が不自然: ${braked.dist}`);
   assert(rolling.speed > 20, `ブレーキなしで止まった: ${rolling.speed}`);
+});
+
+test('接地: 崖の壁に水平に突っ込むと、崖の上へ飛び移らずに壁で止まって壊れる', () => {
+  for (const speed of [30, 120, 400]) {
+    const ship = parked(15); // 地面から 15 m の高さを水平に飛ぶ
+    ship.gearDown = false;
+    ship.gear = 0;
+    ship.body.vel.set(0, 0, -speed);
+    const planet = cliffPlanet(-60, 400, 30);
+    let highest = 0, farthest = 0;
+    const { damage } = ground(ship, 3, false, planet, (s) => {
+      highest = Math.max(highest, s.body.pos.length() - R);
+      farthest = Math.min(farthest, s.body.pos.z);
+    });
+    assert(highest < 60, `${speed} m/s: 崖の上へ飛び移った (高さ ${highest.toFixed(0)} m)`);
+    assert(farthest > -100, `${speed} m/s: 壁を突き抜けた (z = ${farthest.toFixed(0)} m)`);
+    assert(ship.body.vel.z > -5, `${speed} m/s: 壁で止まらない (${ship.body.vel.z.toFixed(1)} m/s)`);
+    assert(damage > (speed > 50 ? 100 : 1), `${speed} m/s: 損傷が小さい (${damage.toFixed(1)})`);
+  }
+});
+
+test('接地: 平らな崖の上には普通に着陸できる (崖の際の判定が地面全体を壊さない)', () => {
+  const ship = parked(3);
+  const planet = cliffPlanet(-15, 400, 30); // 機首の 12 m 先から崖がそびえる。足元は平ら
+  const { damage, gc } = ground(ship, 6, true, planet);
+  assert(damage === 0 && gc.gearContacts === 3, `着陸できない: 損傷 ${damage} 脚 ${gc.gearContacts}`);
 });
 
 test('空力: 音速付近で抗力が跳ね上がり、低空ではスロットル全開でも速度に上限がある', () => {

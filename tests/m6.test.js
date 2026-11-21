@@ -69,19 +69,66 @@ test('クレーター・侵食: 細部を省いても大きな形は変わらな
   assert(worst < 60, `LOD 間の差が大きい: ${worst}`);
 });
 
-test('地形: ワープと侵食を入れても標高は連続 (1 m 動いて段差ができない)', () => {
+/** (x,y,z) から接線方向に m (m) ずらした点での標高の差。 */
+const stepDiff = (t, R, x, y, z, m) => {
+  let x2 = x + (m / R) * z, y2 = y, z2 = z - (m / R) * x;
+  const inv = 1 / Math.hypot(x2, y2, z2);
+  x2 *= inv; y2 *= inv; z2 *= inv;
+  return Math.abs(t.height(x, y, z, 1) - t.height(x2, y2, z2, 1));
+};
+
+test('地形: 崖があっても標高は連続 (ずらす距離を縮めれば差も縮む)', () => {
+  // 崖は急だが、本当の段差 (ずらす距離をいくら縮めても残る差) はない
   const R = 400e3;
-  for (const type of ['terran', 'rock', 'desert']) {
+  for (const type of ['terran', 'rock', 'desert', 'ice', 'lava']) {
     const t = makeTerrain({ seed: 12, radius: R, terrain: { type, land: 0.3, cAmp: 2400, mAmp: 6000, hAmp: 380 } });
+    let worst1 = 0, worst01 = 0;
+    sphere(2500, (x, y, z) => {
+      worst1 = Math.max(worst1, stepDiff(t, R, x, y, z, 1));
+      worst01 = Math.max(worst01, stepDiff(t, R, x, y, z, 0.1));
+    });
+    assert(worst1 < 25, `${type}: 1 m で ${worst1.toFixed(1)} m の段差`);
+    assert(worst01 < 3, `${type}: 0.1 m で ${worst01.toFixed(2)} m の段差`);
+  }
+});
+
+test('渓谷・台地: 砂漠には深い渓谷と高い台地があり、崖は切り立っている', () => {
+  const R = 330e3;
+  const base = { type: 'desert', land: 0.45, cAmp: 2400, mAmp: 7500, hAmp: 380 };
+  const t = makeTerrain({ seed: 77, radius: R, terrain: base });
+  const plain = makeTerrain({ seed: 77, radius: R, terrain: { ...base, canyons: 0, mesas: 0 } });
+  let deepest = 0, highest = 0, steepest = 0, carved = 0;
+  const N = 6000;
+  sphere(N, (x, y, z) => {
+    const d = t.height(x, y, z, 1) - plain.height(x, y, z, 1);
+    deepest = Math.min(deepest, d);
+    highest = Math.max(highest, d);
+    if (d < -100) carved++;
+    // 崖の上では 20 m ずらすと高さが大きく変わる
+    steepest = Math.max(steepest, stepDiff(t, R, x, y, z, 20) / 20);
+  });
+  assert(deepest < -800, `渓谷が浅い: ${deepest.toFixed(0)} m`);
+  assert(highest > 300, `台地が低い: ${highest.toFixed(0)} m`);
+  assert(carved > N * 0.03 && carved < N * 0.6, `渓谷の割合: ${(carved / N).toFixed(3)}`);
+  assert(steepest > 3, `崖がなだらか (最大の傾き ${steepest.toFixed(2)})`);
+
+  // 0 を指定すれば消える。海洋惑星の海底は削られない
+  const ocean = makeTerrain({ seed: 77, radius: R });
+  const flat = makeTerrain({ seed: 77, radius: R, terrain: { type: 'terran', land: 0.05, cAmp: 2800, mAmp: 6500, hAmp: 320, canyons: 0 } });
+  sphere(2000, (x, y, z) => {
+    const a = flat.height(x, y, z, 50);
+    if (a < -50) assert(ocean.height(x, y, z, 50) === a, '海底が削られた');
+  });
+});
+
+test('渓谷・台地: 細部を省いても大きな形は変わらない', () => {
+  for (const type of ['desert', 'ice', 'lava', 'terran']) {
+    const t = makeTerrain({ seed: 9, radius: 300e3, terrain: { type, land: 0.3, cAmp: 2400, mAmp: 6000, hAmp: 380 } });
     let worst = 0;
     sphere(1500, (x, y, z) => {
-      // 接線方向に 1 m ずらす
-      let x2 = x + (1 / R) * z, y2 = y, z2 = z - (1 / R) * x;
-      const inv = 1 / Math.hypot(x2, y2, z2);
-      x2 *= inv; y2 *= inv; z2 *= inv;
-      worst = Math.max(worst, Math.abs(t.height(x, y, z, 1) - t.height(x2, y2, z2, 1)));
+      worst = Math.max(worst, Math.abs(t.height(x, y, z, 1) - t.height(x, y, z, 40)));
     });
-    assert(worst < 8, `${type}: 1 m で ${worst} m の段差`);
+    assert(worst < 60, `${type}: LOD 間の差が大きい: ${worst.toFixed(1)}`);
   }
 });
 

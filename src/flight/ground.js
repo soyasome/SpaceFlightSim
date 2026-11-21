@@ -43,6 +43,14 @@ export const HULL = {
 const VISCOUS = 1e5;
 const MIN_CLEARANCE = 0.45; // 機体の中心がこれより地面に近づいたら強制的に押し戻す
 const SAMPLE = 2.0; // 地面の傾きを測る間隔 (m)
+// 機体の中心が真下の地面からこれより高ければ、どの点も地面に届かないとみなす。
+// 崖の壁は真下の地面よりずっと高くそびえるので、地形の最大の段差より大きくしておく
+const REACH_ALT = 4000;
+const DEEP = 2; // 真下の地面からこれより深くめり込んだ点は、壁を抜けたものとして扱う (m)
+// ばねの力を計算するときのめり込みの上限 (m)。高速で突っ込んだときに、
+// 一瞬で何百 m も弾き飛ばされないようにする (止めるのは MIN_CLEARANCE の押し戻しの役目)
+const MAX_DEPTH = 2;
+const MAX_POINT_ACCEL = 400; // 1点が機体に与える力の上限 (機体の質量 × この加速度, m/s²)
 
 const _up = new Vector3();
 const _t1 = new Vector3();
@@ -61,11 +69,37 @@ const _side = new Vector3();
 const _w = new Vector3();
 const _qi = new Quaternion();
 const _pt = new Vector3();
+const _pw = new Vector3();
+const _upP = new Vector3();
+const _np = new Vector3();
+const _nv = new Vector3();
+
+/**
+ * 点 p の真下の地面の法線を out に入れる。g: p の真下の地面の半径 (呼び出し側で求めたもの)。
+ * p のまわり SAMPLE (m) の2点との高さの差から求める。
+ */
+function groundNormal(planet, p, g, out) {
+  const r = p.length();
+  _upP.copy(p).divideScalar(r);
+  _t1.set(0, 1, 0);
+  if (Math.abs(_upP.y) > 0.9) _t1.set(1, 0, 0);
+  _t1.cross(_upP).normalize();
+  _t2.crossVectors(_upP, _t1);
+  _p0.copy(_upP).multiplyScalar(g);
+  _p1.copy(_p0).addScaledVector(_t1, SAMPLE);
+  _p1.multiplyScalar(planet.groundRadiusAt(_p1) / _p1.length());
+  _p2.copy(_p0).addScaledVector(_t2, SAMPLE);
+  _p2.multiplyScalar(planet.groundRadiusAt(_p2) / _p2.length());
+  out.crossVectors(_p1.sub(_p0), _p2.sub(_p0)).normalize();
+  if (out.dot(_upP) < 0) out.negate();
+  return out;
+}
 
 /**
  * 地面との接触。脚と機体の各点を「ばね + ダンパー + 摩擦」で地面に押し返す。
  * 機体は惑星ローカル座標 (地面が静止している座標) にあること。
- * 地面は、機体の真下とその近く2点から求めた平面で近似する。
+ * 地面は点ごとに、その点の真下とその近く2点から求めた平面で近似する。
+ * (崖の壁に機首から突っ込んだときも、壁に当たった点が壁から押し返される)
  */
 export class GroundContact {
   constructor() {
@@ -96,33 +130,14 @@ export class GroundContact {
     _up.copy(body.pos).divideScalar(r);
     const g0 = planet.groundRadiusAt(body.pos);
     const alt = r - g0;
-    if (alt > 30) {
+    if (alt > REACH_ALT) {
       this.prev.fill(false);
       return this;
     }
-
-    // --- 地面の平面 ---
-    _t1.set(0, 1, 0);
-    if (Math.abs(_up.y) > 0.9) _t1.set(1, 0, 0);
-    _t1.cross(_up).normalize();
-    _t2.crossVectors(_up, _t1);
-    _p0.copy(_up).multiplyScalar(g0);
-    _p1.copy(body.pos).addScaledVector(_t1, SAMPLE);
-    _p1.multiplyScalar(planet.groundRadiusAt(_p1) / _p1.length());
-    _p2.copy(body.pos).addScaledVector(_t2, SAMPLE);
-    _p2.multiplyScalar(planet.groundRadiusAt(_p2) / _p2.length());
-    _n.crossVectors(_p1.sub(_p0), _p2.sub(_p0)).normalize();
-    if (_n.dot(_up) < 0) _n.negate();
-    this.normal.copy(_n);
+    // 機体の真下の地面の向き (静止摩擦の判定などに使う)
+    groundNormal(planet, body.pos, g0, this.normal);
 
     _qi.copy(body.quat).invert();
-    // 車輪の転がる向き: 機首方向を地面に沿わせたもの
-    _fwd.set(0, 0, -1).applyQuaternion(body.quat);
-    _fwd.addScaledVector(_n, -_fwd.dot(_n));
-    const hasFwd = _fwd.lengthSq() > 1e-4;
-    if (hasFwd) _fwd.normalize();
-    _side.crossVectors(_n, _fwd);
-
     const gearActive = gear > 0.3;
     const total = GEAR_POINTS.length + HULL_POINTS.length;
     for (let i = 0; i < total; i++) {
@@ -135,8 +150,40 @@ export class GroundContact {
         _pt.copy(HULL_POINTS[i - GEAR_POINTS.length]);
       }
       _rw.copy(_pt).applyQuaternion(body.quat);
-      const depth = -_r.copy(body.pos).add(_rw).sub(_p0).dot(_n);
+      // この点の真下の地面より下にあるか
+      _pw.copy(body.pos).add(_rw);
+      const rp = _pw.length();
+      const gp = planet.groundRadiusAt(_pw);
+      if (rp >= gp) { this.prev[i] = false; continue; }
+      let depth;
+      if (gp - rp > DEEP && r > g0) {
+        // 深くめり込んだ (崖の壁を抜けて、台地の下に入った)。真下の地面 (台地の上面) を基準にすると
+        // 上へ大きく弾き出されてしまうので、機体の中心からこの点へ向かう線が地面を横切る所を探し、
+        // そこの面 (= 壁) を基準にする
+        let lo = 0, hi = 1;
+        for (let k = 0; k < 10; k++) {
+          const mid = (lo + hi) / 2;
+          _np.copy(body.pos).addScaledVector(_rw, mid);
+          if (_np.length() < planet.groundRadiusAt(_np)) hi = mid;
+          else lo = mid;
+        }
+        _np.copy(body.pos).addScaledVector(_rw, hi);
+        groundNormal(planet, _np, planet.groundRadiusAt(_np), _n);
+        depth = _r.copy(_p0).sub(_pw).dot(_n); // _p0: 横切った所の真下の地面の点
+      } else {
+        // 地面を、この点の真下の接平面で近似する。めり込みはその平面までの距離
+        groundNormal(planet, _pw, gp, _n);
+        depth = (gp - rp) * _n.dot(_upP);
+      }
       if (depth <= 0) { this.prev[i] = false; continue; }
+      depth = Math.min(depth, MAX_DEPTH);
+
+      // 車輪の転がる向き: 機首方向を地面に沿わせたもの
+      _fwd.set(0, 0, -1).applyQuaternion(body.quat);
+      _fwd.addScaledVector(_n, -_fwd.dot(_n));
+      const hasFwd = _fwd.lengthSq() > 1e-4;
+      if (hasFwd) _fwd.normalize();
+      _side.crossVectors(_n, _fwd);
 
       // 接地点の速度 = 重心の速度 + 回転による速度
       _v.crossVectors(body.angVel, _pt).applyQuaternion(body.quat).add(body.vel);
@@ -157,6 +204,9 @@ export class GroundContact {
         N = HULL.stiffness * depth - HULL.damping * vn;
       }
       if (N < 0) N = 0;
+      // 高速で壁に当たったとき、ダンパーの力で機体が弾き飛ばされないよう上限を設ける
+      // (それ以上の減速は MIN_CLEARANCE の押し戻しが受け持つ)
+      N = Math.min(N, body.mass * MAX_POINT_ACCEL);
 
       _vt.copy(_v).addScaledVector(_n, -vn);
       const vt = _vt.length();
@@ -185,15 +235,55 @@ export class GroundContact {
       if (vt > this.slideSpeed) this.slideSpeed = vt;
     }
 
-    // 高速で突っ込んで地面をすり抜けないための最後の砦
+    // 高速で突っ込んで地面をすり抜けないための最後の砦。
+    // 真上ではなく地面の法線の向きに押し出す (崖の壁にめり込んだら、崖の上ではなく壁の外へ出す)
     if (alt < MIN_CLEARANCE) {
-      const vn = body.vel.dot(_up);
+      _n.copy(this.normal);
+      let g = g0;
+      const prev = body.prevPos;
+      if (-alt > DEEP && prev.distanceToSquared(body.pos) < 400 * 400 &&
+          prev.length() > planet.groundRadiusAt(prev)) {
+        // 1ステップで壁の奥まで入った。前のステップの位置からの経路が地面を横切る所を探し、
+        // そこから壁の外へ出す (真下の地面を基準にすると崖の上へ持ち上がってしまう)
+        let lo = 0, hi = 1;
+        for (let k = 0; k < 12; k++) {
+          const mid = (lo + hi) / 2;
+          _np.copy(prev).lerp(body.pos, mid);
+          if (_np.length() < planet.groundRadiusAt(_np)) hi = mid;
+          else lo = mid;
+        }
+        _np.copy(prev).lerp(body.pos, hi);
+        groundNormal(planet, _np, planet.groundRadiusAt(_np), _n);
+        body.pos.copy(prev).lerp(body.pos, lo).addScaledVector(_n, MIN_CLEARANCE);
+        g = planet.groundRadiusAt(body.pos);
+      }
+      _nv.copy(_n); // 速度を消す向き: 最初に押し出した面の法線
+      for (let k = 0; k < 4; k++) {
+        const rr = body.pos.length();
+        _upP.copy(body.pos).divideScalar(rr);
+        const need = (g + MIN_CLEARANCE - rr) * _n.dot(_upP); // 接平面から MIN_CLEARANCE 離すのに要る距離
+        if (need <= 1e-3) break;
+        body.pos.addScaledVector(_n, need + 1e-3);
+        g = planet.groundRadiusAt(body.pos);
+        groundNormal(planet, body.pos, g, _n);
+      }
+      // まだ地面の下なら (ありえない形の地面)、真上へ戻す
+      const rr = body.pos.length();
+      if (rr < g + MIN_CLEARANCE * 0.5) {
+        body.pos.multiplyScalar((g + MIN_CLEARANCE) / rr);
+        _nv.copy(body.pos).normalize();
+      }
+      const vn = body.vel.dot(_nv);
       if (vn < 0) {
         if (-vn > HULL.safeSpeed) this.damage += (-vn - HULL.safeSpeed) ** 2 * HULL.damageK;
         if (-vn > this.impactSpeed) this.impactSpeed = -vn;
-        body.vel.addScaledVector(_up, -vn);
+        body.vel.addScaledVector(_nv, -vn);
+        // 摩擦の力積: 面に沿った速度も、ぶつかった勢いに比例して削る
+        // (なければ、急な斜面に高速で当たったとき斜面に沿って上へ跳ね上がる)
+        _vt.copy(body.vel).addScaledVector(_nv, -body.vel.dot(_nv));
+        const vt = _vt.length();
+        if (vt > 1e-6) body.vel.addScaledVector(_vt, -Math.min(1, (HULL.friction * -vn) / vt));
       }
-      body.pos.copy(_up).multiplyScalar(g0 + MIN_CLEARANCE);
       this.contacts = Math.max(this.contacts, 1);
     }
     return this;

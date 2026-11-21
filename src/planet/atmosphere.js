@@ -205,11 +205,16 @@ export function createTerrainMaterial(uniforms) {
         float n2 = vnoise(pl * 3.0, 768.0) - 0.5;
         float detail = nA * 0.16 * fadeA + nB * 0.2 * fadeB + n1 * 0.3 * fade1 + n2 * 0.24 * fade2;
 
-        // 急斜面には水平な地層の縞を出す
+        // 急斜面には水平な地層の縞を出す。細かい縞 (約 3 m) と、崖の段に見合う太い縞 (約 30 m)。
+        // 1ピクセルの間に標高が縞の幅より大きく変わる所 (遠くの崖) では、ちらつかないよう消す
         float steep = 1.0 - smoothstep(0.55, 0.8, dot(N, up));
         float alt = length(pc) - uRp;
-        float strata = vnoise(vec3(alt * 0.35 + nB * 3.0, 7.3, 2.1), 4096.0) - 0.5;
-        detail += strata * 0.4 * steep * fadeB;
+        float altW = fwidth(alt);
+        float strataFine = (vnoise(vec3(alt * 0.35 + nB * 3.0, 7.3, 2.1), 4096.0) - 0.5)
+                         * (1.0 - smoothstep(0.3, 0.8, altW * 0.35));
+        float strataCoarse = (vnoise(vec3(alt * 0.03 + nA * 2.0, 3.1, 5.7), 4096.0) - 0.5)
+                           * (1.0 - smoothstep(0.3, 0.8, altW * 0.03));
+        detail += (strataFine * 0.35 + strataCoarse * 0.7) * steep;
         albedo *= 1.0 + detail * ground;
 
         // 凹凸 (m) として法線も傾ける。水面では、向きの違う2枚のノイズを流して波にする。
