@@ -214,6 +214,20 @@ test('空力: 音速付近で抗力が跳ね上がり、低空ではスロット
   assert(boost > 650 && boost < 800, `ブーストの最高速度: ${boost.toFixed(0)} m/s`);
 });
 
+test('大気中: 高速でも操縦桿いっぱいで 12G 以上引いて曲がれる', () => {
+  const ship = new Ship(FIGHTER);
+  ship.body.vel.set(0, 0, -400);
+  const c = makeControls();
+  c.pitch = 1;
+  c.throttle = 1;
+  let gMax = 0;
+  for (let i = 0; i < 3 * 120; i++) {
+    ship.step(H, c, env({ gravity: ZERO }));
+    gMax = Math.max(gMax, ship.aero.force.y / FIGHTER.mass / G);
+  }
+  assert(gMax > 12, `引ける G が小さい: ${gMax.toFixed(1)} G`);
+});
+
 test('加熱: 濃い空気の中を速く飛ぶほど熱くなり、限界を超えると損傷する', () => {
   const heatAt = (speed) => {
     const ship = new Ship(FIGHTER);
@@ -254,6 +268,22 @@ test('巡航: 地表へ真下に降りても、速さは高度で決まる上限
     }
     assert(alt <= 20e3, `降りきれない (boost ${boost}): ${alt}`);
     assert(worst < 1.25, `上限を超えすぎ (boost ${boost}): ${worst.toFixed(2)} 倍`);
+  }
+});
+
+test('巡航: 高速でも進行方向がすぐ機首に付いてくる (目的の天体を回り込まない)', () => {
+  for (const scale of [10, 1e4, 1e7]) {
+    const ship = new Ship(FIGHTER);
+    ship.cruise = true;
+    const v = FIGHTER.assistMaxSpeed * scale;
+    ship.body.vel.set(v, 0, 0); // 機首 (-Z) に対して真横へ進んでいる
+    const c = makeControls();
+    c.throttle = 1;
+    const e = env({ speedScale: scale, gravity: ZERO, rho: 0, aero: 0 });
+    for (let i = 0; i < 1.5 * 120; i++) ship.step(H, c, e);
+    const vel = ship.body.vel;
+    assert(Math.abs(vel.x) < v * 0.05, `scale=${scale}: 横滑りが残った ${(vel.x / v).toFixed(3)}`);
+    assert(-vel.z > v * 0.9, `scale=${scale}: 機首の向きに進んでいない ${(-vel.z / v).toFixed(3)}`);
   }
 });
 

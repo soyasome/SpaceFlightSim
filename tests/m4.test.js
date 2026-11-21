@@ -226,40 +226,46 @@ test('敵AI: 小惑星を避ける', () => {
 });
 
 test('敵AI: 撃たれても全速で離れず、近い距離・近い速さで巴戦を続ける', () => {
-  // 自機役も同じ操縦士に任せ、狙いが合うたびに敵へ「撃たれている」と知らせる
-  const p = makeEnemy(new Vector3(0, 0, 0), new Vector3(0, 0, -1), 300, 11, 0.8);
-  p.ship = new Ship(FIGHTER);
-  p.ship.body.vel.set(0, 0, -300);
-  p.controls = makeControls();
-  const e = makeEnemy(new Vector3(300, 200, -5000), new Vector3(0, 0, 1), 200, 7, 0.6);
-  let n = 0, inRange = 0, relSum = 0, eShots = 0, maxSpeed = 0;
-  for (let i = 0; i < 90 * 120; i++) {
-    if (i % 6 === 3) {
-      p.pilot.update(0.05, p, e, SPACE);
-      p.controls.throttle = 1; // 自機は全速で飛ぶ
-      p.controls.boost = 0;
-      if (p.pilot.wantGun) e.underFire = 2;
-    }
-    if (i % 6 === 0) {
-      e.pilot.update(0.05, e, p, SPACE);
-      if (e.pilot.wantGun) eShots++;
-    }
-    e.underFire -= H;
-    p.ship.step(H, p.controls, SPACE_ENV);
-    e.ship.step(H, e.controls, SPACE_ENV);
-    if (i > 10 * 120 && i % 12 === 0) {
-      n++;
-      maxSpeed = Math.max(maxSpeed, e.ship.body.vel.length());
-      if (p.ship.body.pos.distanceTo(e.ship.body.pos) < W.gunSpeed * W.gunLife) {
-        inRange++;
-        relSum += p.ship.body.vel.distanceTo(e.ship.body.vel);
+  // 巴戦の展開は初期条件で大きく変わるので、敵の乱数を変えて何度か戦わせ、撃ち返した数は平均で見る
+  const SEEDS = [1, 2, 3, 4, 5, 6];
+  let shotsSum = 0;
+  for (const seed of SEEDS) {
+    // 自機役も同じ操縦士に任せ、狙いが合うたびに敵へ「撃たれている」と知らせる
+    const p = makeEnemy(new Vector3(0, 0, 0), new Vector3(0, 0, -1), 300, 11, 0.8);
+    p.ship = new Ship(FIGHTER);
+    p.ship.body.vel.set(0, 0, -300);
+    p.controls = makeControls();
+    const e = makeEnemy(new Vector3(300, 200, -5000), new Vector3(0, 0, 1), 200, seed, 0.6);
+    let n = 0, inRange = 0, relSum = 0, eShots = 0, maxSpeed = 0;
+    for (let i = 0; i < 90 * 120; i++) {
+      if (i % 6 === 3) {
+        p.pilot.update(0.05, p, e, SPACE);
+        p.controls.throttle = 1; // 自機は全速で飛ぶ
+        p.controls.boost = 0;
+        if (p.pilot.wantGun) e.underFire = 2;
+      }
+      if (i % 6 === 0) {
+        e.pilot.update(0.05, e, p, SPACE);
+        if (e.pilot.wantGun) eShots++;
+      }
+      e.underFire -= H;
+      p.ship.step(H, p.controls, SPACE_ENV);
+      e.ship.step(H, e.controls, SPACE_ENV);
+      if (i > 10 * 120 && i % 12 === 0) {
+        n++;
+        maxSpeed = Math.max(maxSpeed, e.ship.body.vel.length());
+        if (p.ship.body.pos.distanceTo(e.ship.body.pos) < W.gunSpeed * W.gunLife) {
+          inRange++;
+          relSum += p.ship.body.vel.distanceTo(e.ship.body.vel);
+        }
       }
     }
+    assert(inRange / n > 0.8, `seed ${seed}: 射程内にいる時間が短い: ${(inRange / n * 100).toFixed(0)}%`);
+    assert(relSum / inRange < 300, `seed ${seed}: すれ違いが速すぎる: 平均の相対速度 ${(relSum / inRange).toFixed(0)} m/s`);
+    assert(maxSpeed < RAIDER.assistMaxSpeed * 1.1, `seed ${seed}: ブーストで離れた: ${maxSpeed.toFixed(0)} m/s`);
+    shotsSum += eShots;
   }
-  assert(inRange / n > 0.8, `射程内にいる時間が短い: ${(inRange / n * 100).toFixed(0)}%`);
-  assert(relSum / inRange < 300, `すれ違いが速すぎる: 平均の相対速度 ${(relSum / inRange).toFixed(0)} m/s`);
-  assert(maxSpeed < RAIDER.assistMaxSpeed * 1.1, `ブーストで離れた: ${maxSpeed.toFixed(0)} m/s`);
-  assert(eShots > 60, `敵が撃ち返せていない: ${eShots}`);
+  assert(shotsSum / SEEDS.length > 60, `敵が撃ち返せていない: 平均 ${(shotsSum / SEEDS.length).toFixed(0)}`);
 });
 
 test('敵AI: 2機が互いを狙って1分間戦っても、数値が壊れない', () => {

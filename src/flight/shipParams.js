@@ -19,7 +19,7 @@ export const FIGHTER = {
   assistBoostSpeed: 1100,
   assistReverseSpeed: 120,
   assistStrafeSpeed: 80,
-  assistLateralAccel: 70, // 横滑りを打ち消す力
+  assistLateralAccel: 150, // 横滑りを打ち消す力。宇宙で進行方向を曲げる速さ (= この値 ÷ 速さ) を決める
   assistLinearGain: 3.0, // 速度誤差 → 加速度 (1/s)
   assistAngularGain: 9.0, // 角速度誤差 → 角加速度 (1/s)
 
@@ -55,9 +55,9 @@ export const FIGHTER = {
     plateDrag: 1.3, // 失速後の抗力係数の大きさ
     sideCoef: 1.0, // 横滑りを打ち消す力
     gearDrag: 0.03, // 着陸装置の抗力
-    pitchStiffness: 34, // 機首を進行方向へ戻す強さ (m³)
+    pitchStiffness: 18, // 機首を進行方向へ戻す強さ (m³)。小さいほど大きな迎角を引ける (高速での旋回 G の上限が上がる)
     yawStiffness: 30,
-    damping: new Vector3(800, 800, 400), // 回転の減衰
+    damping: new Vector3(500, 800, 400), // 回転の減衰 (ピッチは旋回の妨げにならないよう弱め)。この組み合わせで高速旋回は約 13G
     maxMomentQ: 3e6, // トルク計算に使う動圧の上限 (数値安定のため)
   },
 

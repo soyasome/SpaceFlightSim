@@ -244,7 +244,10 @@ export class Ship {
         // 高速からの減速と横滑りの打ち消しは、速度に見合った強さで行う
         // (巡航を切った直後に、通常の推力では止まれない速度が残るため)
         const strong = Math.max(scale, b.vel.length() / p.assistMaxSpeed);
-        const lat = p.assistLateralAccel * strong;
+        let lat = p.assistLateralAccel * strong;
+        // 巡航中は、横滑りも前後の減速と同じ強さで打ち消す。巡航の速さは天体からの距離に比例するので、
+        // 横の力が通常のままだと旋回半径も距離に比例して大きくなり、目的の天体を回り込んでしまう
+        if (drive) lat = Math.max(lat, b.vel.length() / p.cruiseBrakeTime);
         hFx = clamp((c.strafeX * strafeSpeed - _vLocal.x) * g - _gLocal.x, -lat, lat);
         // 着陸装置を出していると、地面の近くでは降下が自動で抑えられる
         // (高度 100m で毎秒 15m、20m 以下で毎秒 3m まで。安全な接地は毎秒 7m 以下)
