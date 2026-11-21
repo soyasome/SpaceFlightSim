@@ -19,6 +19,8 @@ import { cruiseScale } from './flight/cruise.js';
 import { NearStars } from './render/nearStars.js';
 import { enterFrame, leaveFrame } from './physics/frame.js';
 import { Combat } from './combat/combat.js';
+import { SwarmView } from './render/swarm.js';
+import { nearestPanel, HIT_RADIUS } from './universe/swarm.js';
 
 const CAMERA_CLEARANCE = 1.2; // カメラが地面にめり込まないための最低高度 (m)
 const RESPAWN_TIME = 3.5; // 機体を失ってから復帰するまで (秒)
@@ -86,7 +88,11 @@ export class Game {
     this.cruiseDist = Infinity; // いちばん近い天体の表面までの距離 (巡航の速さを決める)
     this.starDist = Infinity; // 恒星の中心までの距離 (m)
     this.galPos = [...HOME_STAR.pos]; // 銀河座標 (光年)
-    this.nav = null; // 行き先 { type: 'planet' | 'star' | 'belt', planet?, star? }
+    this.nav = null; // 行き先 { type: 'planet' | 'star' | 'belt' | 'swarm', planet?, star?, point? (swarm: 星系座標) }
+    this.swarm = null; // ダイソン・スウォームの描画 (ない星系では null)
+    this.swarmHit = null; // いちばん近いパネル (nearestPanel の結果)
+    this._sysPos = new THREE.Vector3();
+    this._camSys = new THREE.Vector3();
     this.jump = null; // ジャンプの進行 { star, t, phase: 'charge' | 'arrive' }
     this.mapOpen = false; // 星図を開いている
     this.sunBase = 3.2;
@@ -381,9 +387,15 @@ export class Game {
         if (d < planet.frameEnter) enter = planet;
       }
       this.altitude = this.altitudeSea = nearest;
-      // 巡航の速さは、惑星だけでなく恒星の表面までの距離でも抑える
+      // 巡航の速さは、惑星だけでなく恒星の表面やスウォームのパネルまでの距離でも抑える
       const toStar = body.pos.distanceTo(this.sunPos) - this.star.radius;
       this.cruiseDist = Math.max(0, Math.min(nearest, toStar));
+      this.swarmHit = null;
+      if (this.system.swarm) {
+        const p = this.shipSysPos(this._sysPos);
+        this.swarmHit = nearestPanel(this.system.swarm, this.swarm.panels, p.x, p.y, p.z);
+        if (this.swarmHit) this.cruiseDist = Math.min(this.cruiseDist, this.swarmHit.surface);
+      }
       if (enter) this.setFrame(enter);
     }
   }
@@ -396,10 +408,22 @@ export class Game {
       this.scene.remove(p.group);
       p.dispose();
     }
+    if (this.swarm) {
+      this.scene.remove(this.swarm.group);
+      this.swarm.dispose();
+      this.swarm = null;
+    }
     this.frame = null;
     this.star = star;
     this.system = generateSystem(star);
-    this.planets = this.system.planets.map((def) => new Planet(def, 22 * star.lum));
+    const swarm = this.system.swarm;
+    // スウォームの外側の惑星には、パネルにさえぎられた残りの光しか届かない
+    const shade = (def) => (swarm && Math.hypot(...def.position) > swarm.radius ? 1 - 0.8 * swarm.coverage : 1);
+    this.planets = this.system.planets.map((def) => new Planet(def, 22 * star.lum * shade(def)));
+    if (swarm) {
+      this.swarm = new SwarmView(swarm, star.color);
+      this.scene.add(this.swarm.group);
+    }
     for (const p of this.planets) {
       p.updateRotation(this.simTime);
       this.scene.add(p.group);
@@ -414,6 +438,7 @@ export class Game {
     this.sunGlow.material.color.setRGB(c[0], c[1], c[2]);
     this.sunLight.color.setRGB(0.5 + 0.5 * c[0], 0.5 + 0.5 * c[1], 0.5 + 0.5 * c[2]);
     this.sunBase = 3.2 * Math.sqrt(star.lum);
+    this.sunColor = c;
 
     this.asteroids.mesh.visible = !!this.system.belt;
     this._placeWorld();
@@ -473,6 +498,30 @@ export class Game {
       this.flash = Math.max(this.flash, 0.3);
       this.notify('恒星に近すぎる — 機体が焼けている', 1);
     }
+    // スウォームのパネルにぶつかる
+    const hit = this.swarmHit;
+    if (hit && !this.frame && !this.destroyed) {
+      const def = this.system.swarm;
+      const half = def.thickness / 2 + 4;
+      if (Math.abs(hit.normal) < half && hit.lateral < def.panel * HIT_RADIUS) {
+        const pp = this.swarm.panels.pos, i = hit.index * 3;
+        const n = this._v2.set(-pp[i], -pp[i + 1], -pp[i + 2]).normalize(); // パネルの法線 (恒星の方)
+        const side = hit.normal >= 0 ? 1 : -1;
+        body.pos.addScaledVector(n, side * half - hit.normal); // 来た側の面の外へ押し戻す
+        body.prevPos.copy(body.pos);
+        const vn = body.vel.dot(n);
+        if (vn * side < 0) {
+          const impact = Math.abs(vn);
+          body.vel.addScaledVector(n, -vn * 1.3); // 跳ね返る
+          if (ship.driving) ship.stopCruise();
+          if (impact > 15) {
+            ship.hull -= Math.min(120, impact * 0.6);
+            this.onPlayerHit(impact * 0.2, true);
+            this.notify('パネルに衝突した', 1.5);
+          }
+        }
+      }
+    }
     // ガス巨星の深い所では気圧でつぶされる
     if (!this.destroyed && this.frame && this.frame.gas && this.altitudeSea < 40e3) {
       ship.hull -= 25 * h;
@@ -527,6 +576,10 @@ export class Game {
     const list = this.planets
       .map((planet) => ({ nav: { type: 'planet', planet }, d: planet.pos.distanceTo(here) }));
     if (this.system.belt) list.push({ nav: { type: 'belt' }, d: this.asteroids.center.distanceTo(here) });
+    if (this.system.swarm) {
+      const nav = this.swarmNav();
+      list.push({ nav, d: this._v.copy(nav.point).sub(this.origin).distanceTo(here) });
+    }
     list.sort((a, b) => a.d - b.d);
     let i = -1;
     if (this.nav) {
@@ -540,7 +593,19 @@ export class Game {
     if (!nav) return '';
     if (nav.type === 'planet') return nav.planet.name;
     if (nav.type === 'star') return `${nav.star.name} 星系`;
+    if (nav.type === 'swarm') return 'ダイソン・スウォーム';
     return '小惑星帯';
+  }
+
+  /** スウォームへの行き先 (いま機体にいちばん近いパネルの表側、パネルの大きさの半分ほど手前)。 */
+  swarmNav() {
+    const def = this.system.swarm;
+    const p = this.shipSysPos(this._sysPos);
+    const hit = nearestPanel(def, this.swarm.panels, p.x, p.y, p.z);
+    const i = hit.index * 3, pp = this.swarm.panels.pos;
+    const c = new THREE.Vector3(pp[i], pp[i + 1], pp[i + 2]);
+    const point = c.clone().multiplyScalar(1 - (def.panel * 0.5) / c.length());
+    return { type: 'swarm', point };
   }
 
   /** ジャンプの開始 / 中止。 */
@@ -826,6 +891,31 @@ export class Game {
     this.nearStars.points.quaternion.copy(this._fqInv);
     this.nearStars.update(dt, this.galPos, this.star, sunNear);
 
+    // スウォームの外から見ると、恒星はパネルにさえぎられて暗く赤い
+    let starDim = 1;
+    const swarm = this.swarm;
+    if (swarm) {
+      const camSys = this._camSys.copy(cam);
+      if (this.frame) camSys.applyQuaternion(this.frame.quat).add(this.frame.sysPos);
+      else camSys.add(this.origin);
+      const def = swarm.def;
+      const out = clamp((camSys.length() - def.radius * 0.98) / (def.radius * 0.2), 0, 1);
+      starDim = 1 - 0.8 * def.coverage * out;
+      swarm.update(camSys, this.swarmHit ? this.swarmHit.surface : camSys.length() * 0.1);
+      this.toRender(this._v.copy(swarm.anchor).sub(this.origin), swarm.group.position);
+      swarm.group.quaternion.copy(this._fqInv);
+      const u = swarm.material.uniforms;
+      u.uSunPos.value.copy(this.sun.position);
+      u.uSunI.value = 1.6 * Math.sqrt(this.star.lum);
+      const pu = swarm.pointMaterial.uniforms;
+      pu.uPxScale.value = window.innerHeight / 2 / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+      pu.uPixelRatio.value = this.renderer.getPixelRatio();
+    }
+    const sc = this.sunColor;
+    const red = 1 - starDim; // 暗くなるほど赤く (パネルの排熱の赤外線)
+    this.sun.material.color.setRGB(sc[0] * starDim, sc[1] * starDim * (1 - red * 0.5), sc[2] * starDim * (1 - red * 0.8));
+    this.sunGlow.material.color.copy(this.sun.material.color);
+
     // 惑星
     let starFade = 1;
     let airDensity = 0;
@@ -865,7 +955,7 @@ export class Game {
     this.nearStars.material.uniforms.uFade.value = starFade;
     // 恒星から遠く離れると光が届かなくなる
     const reach = clamp(3e13 / sunDist, 0, 1);
-    this.sunLight.intensity = this.sunBase * sunVisible * reach;
+    this.sunLight.intensity = this.sunBase * sunVisible * reach * starDim;
     this.ambient.intensity = 0.25 + 0.55 * sunVisible * reach;
 
     // 塵は速すぎると点滅して見えるので、高速では消す
@@ -965,6 +1055,9 @@ export class Game {
         dist = rel.length() - this.nav.planet.radius;
       } else if (this.nav.type === 'belt') {
         this.toRender(this.asteroids.center, rel);
+        dist = rel.length();
+      } else if (this.nav.type === 'swarm') {
+        this.toRender(this._v2.copy(this.nav.point).sub(this.origin), rel);
         dist = rel.length();
       } else {
         // 別の恒星: 銀河座標の差から方向と距離を求める

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { starsNear, LY } from '../universe/galaxy.js';
+import { swarmCoverage } from '../universe/swarm.js';
 
 const MAX = 160;
 const RANGE = 25; // 光年。これより近い恒星を「実物」として描く
@@ -77,10 +78,12 @@ export class NearStars {
       this.pos[n * 3 + 2] = dz * k;
       // 近いほど大きく明るい。遠い星は背景の星と同じくらいになる
       const near = Math.min(1, 0.6 / (d + 0.05));
-      const b = (0.55 + 0.9 * Math.min(1, 3 / (d + 0.3))) * (0.7 + 0.3 * star.lum);
+      // ダイソン・スウォームに囲まれた恒星は暗く、赤く見える (手がかりになる)
+      const cov = swarmCoverage(star);
+      const b = (0.55 + 0.9 * Math.min(1, 3 / (d + 0.3))) * (0.7 + 0.3 * star.lum) * (1 - 0.8 * cov);
       this.col[n * 3] = star.color[0] * b;
-      this.col[n * 3 + 1] = star.color[1] * b;
-      this.col[n * 3 + 2] = star.color[2] * b;
+      this.col[n * 3 + 1] = star.color[1] * b * (1 - 0.5 * cov);
+      this.col[n * 3 + 2] = star.color[2] * b * (1 - 0.8 * cov);
       this.size[n] = 3 + 4.5 * Math.min(1, 4 / (d + 0.5)) + 14 * near;
       n++;
     }

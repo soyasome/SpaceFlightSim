@@ -115,6 +115,13 @@ export class StarMap {
       this._row(this.bodies, p.name, `${TYPE_LABEL[p.type] || p.type}${air}`, formatDistance(dist), selected,
         pick(selected ? null : { type: 'planet', planet: p }), isMoon(p) ? 'indent' : '');
     }
+    const sw = game.system.swarm;
+    if (sw) {
+      const selected = !!nav && nav.type === 'swarm';
+      const dist = Math.max(0, Math.abs(here.length() - sw.radius) - sw.panel);
+      this._row(this.bodies, 'ダイソン・スウォーム', `集光パネル ${sw.count.toLocaleString()} 枚・被覆 ${Math.round(sw.coverage * 100)}%`,
+        formatDistance(dist), selected, pick(selected ? null : game.swarmNav()));
+    }
     if (game.system.belt) {
       const selected = !!nav && nav.type === 'belt';
       const b = game.system.belt.position;
@@ -129,7 +136,8 @@ export class StarMap {
       const current = star === game.star;
       const selected = !!nav && nav.type === 'star' && nav.star === star;
       const sys = generateSystem(star);
-      const info = `${star.label}・惑星 ${sys.planets.filter((p) => p.parent === null || p.parent === undefined).length}`;
+      const info = `${star.label}・惑星 ${sys.planets.filter((p) => p.parent === null || p.parent === undefined).length}`
+        + (sys.swarm ? '・スウォーム' : '') + (sys.planets.some((p) => p.type === 'city') ? '・都市' : '');
       this._row(this.stars, star.name, current ? `${info}・現在地` : info, formatDistance(dist * LY), selected,
         current ? null : pick(selected ? null : { type: 'star', star }), current ? 'current' : '');
     }

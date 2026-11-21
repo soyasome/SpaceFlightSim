@@ -1,5 +1,6 @@
 import { mulberry32 } from '../math/random.js';
 import { AU } from './galaxy.js';
+import { makeSwarm } from './swarm.js';
 
 // 恒星から、その星系の惑星・小惑星帯・敵の哨戒隊を決める。three.js には依存しない。
 // 位置はすべて「星系座標」= 恒星の中心を原点とした m。
@@ -267,7 +268,7 @@ function homeSystem(star) {
     { ...NO_AIR, gravity: 1.2, terrain: { tint: [1.05, 0.95, 0.92] } });
 
   return {
-    star, planets, start,
+    star, planets, start, swarm: null,
     belt: { position: [start[0], start[1] - 600, start[2] - 9000], seed: 9 },
     zones: [
       { kind: 'belt', roster: ['raider', 'raider'] },
@@ -278,7 +279,8 @@ function homeSystem(star) {
 
 /**
  * 星系を作る。
- * @returns { star, planets: [天体の定義], belt: { position, seed } | null, zones: [敵の哨戒隊], start? }
+ * @returns { star, planets: [天体の定義], belt: { position, seed } | null, zones: [敵の哨戒隊], swarm, start? }
+ *   swarm: ダイソン・スウォームの定義 (swarm.js の makeSwarm) | null
  */
 export function generateSystem(star) {
   if (star.home) return homeSystem(star);
@@ -356,5 +358,9 @@ export function generateSystem(star) {
     }
   });
 
-  return { star, planets, belt, zones };
+  // ダイソン・スウォーム: いちばん内側の惑星より内側に置く
+  const inner = Math.min(...planets.filter((p) => p.parent === null).map((p) => Math.hypot(...p.position)));
+  const swarm = makeSwarm(star, inner);
+
+  return { star, planets, belt, zones, swarm };
 }
