@@ -343,6 +343,10 @@ export class Combat {
       return;
     }
     if (game.destroyed) return;
+    if (game.frame && game.frame.safe) {
+      game.notify('居住地の中では敵を呼べません');
+      return;
+    }
     const room = MAX_ENEMIES - this.enemies.length;
     if (room <= 0) {
       game.notify('これ以上は呼べません');

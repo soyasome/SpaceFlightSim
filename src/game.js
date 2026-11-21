@@ -278,6 +278,11 @@ export class Game {
     const env = this._env;
     const controls = this.input.controls;
 
+    // 居住地の中では巡航できない (壁に囲まれている)
+    if (this.frame && this.frame.safe && ship.cruise) {
+      ship.stopCruise();
+      this.notify('居住地の中では巡航できません', 1.5);
+    }
     // 巡航モード: いちばん近い天体から遠いほど速く飛べる (速度則は src/flight/cruise.js)
     env.speedScale = cruiseScale(this.cruiseDist);
 
@@ -399,6 +404,7 @@ export class Game {
         const c = hullContact(h.def, ...h.toLocal(body.pos, this._v).toArray());
         if (!this.habitatHit || c.distance < this.habitatHit.contact.distance) this.habitatHit = { habitat: h, contact: c };
         this.cruiseDist = Math.min(this.cruiseDist, c.distance);
+        if (h.entersAt(body.pos)) enter = h; // 入港口の筒に入った
       }
       this.swarmHit = null;
       if (this.system.swarm) {
@@ -539,6 +545,24 @@ export class Game {
             ship.hull -= Math.min(120, impact * 0.6);
             this.onPlayerHit(impact * 0.2, true);
             this.notify('パネルに衝突した', 1.5);
+          }
+        }
+      }
+    }
+    // オニール・シリンダーの中: 両端の蓋にぶつかる
+    if (this.frame && this.frame.wallContact && !this.destroyed) {
+      const w = this.frame.wallContact(body.pos, 8);
+      if (w) {
+        const n = this._v2.set(...w.normal);
+        body.pos.addScaledVector(n, w.depth);
+        body.prevPos.copy(body.pos);
+        const vn = body.vel.dot(n);
+        if (vn < 0) {
+          body.vel.addScaledVector(n, -vn * 1.3);
+          if (-vn > 15) {
+            ship.hull -= Math.min(120, -vn * 0.6);
+            this.onPlayerHit(-vn * 0.2, true);
+            this.notify('蓋の壁に衝突した', 1.5);
           }
         }
       }
@@ -719,12 +743,23 @@ export class Game {
       leaveFrame(body, this.frame);
       this.rig.reframe(this.frame.quat, body.vel);
     }
+    const left = this.frame;
     this.frame = planet;
     if (planet) {
       enterFrame(body, planet);
       this.rig.reframe(this._qInv.copy(planet.quat).invert(), body.vel);
     }
     if (this.combat) this.combat.reframe();
+    // オニール・シリンダー: 中にいる間は外の見た目の回転を止める。巡航は使えない
+    if (left && left.unfreeze) {
+      left.unfreeze(this.simTime);
+      this.notify(`${left.name} を出港した`, 2);
+    }
+    if (planet && planet.freeze) {
+      planet.freeze();
+      this.ship.stopCruise();
+      this.notify(`${planet.name} に入港した — 中は安全地帯`, 3);
+    }
   }
 
   /** 画面に短い知らせを出す。 */
@@ -759,7 +794,7 @@ export class Game {
     if (this.frame) {
       // ガス巨星では、気圧でつぶされない高さまで戻す
       const alt = this.frame.gas ? this.frame.atmosphere.height + 60e3 : RESPAWN_ALTITUDE;
-      this.placeShip(this.frame, this.frame.upAt(ship.body.pos, new THREE.Vector3()), alt);
+      this.placeShip(this.frame, ship.body.pos.clone(), alt);
     } else {
       this.input.throttle = 0; // 宇宙ではその場で復帰する
       // 恒星のそばで失ったときは、安全な距離まで離す
@@ -964,6 +999,8 @@ export class Game {
     for (const h of this.habitats) {
       this.toRender(h.pos, h.group.position);
       h.group.quaternion.copy(this._fqInv).multiply(h.quat);
+      // 中は、その円筒の中にいるときと、入港口に近づいたとき (筒の奥に中が見える) だけ描く
+      h.interior.visible = h === this.frame || (!this.frame && h.nearPort(cam)); // 宇宙ではカメラの位置 = 世界座標
     }
 
     // 惑星
@@ -1007,6 +1044,12 @@ export class Game {
     const reach = clamp(3e13 / sunDist, 0, 1);
     this.sunLight.intensity = this.sunBase * sunVisible * reach * starDim;
     this.ambient.intensity = 0.25 + 0.55 * sunVisible * reach;
+    // 居住地の中では、機体は向かいの窓から差し込む鏡の光に照らされる (座標系の向き = 描画の向き)
+    if (this.frame && this.frame.lightDirAt) {
+      this.frame.lightDirAt(this._sPos, this.sunLight.position);
+      this.sunLight.intensity = 2.4;
+      this.ambient.intensity = 0.7;
+    }
 
     // 塵は速すぎると点滅して見えるので、高速では消す
     const speed = body.vel.length();

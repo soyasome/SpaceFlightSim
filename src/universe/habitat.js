@@ -13,6 +13,10 @@ export const HABITAT = {
   gap: 2.5, // 2本の軸の間隔 (直径の倍数)
   hull: 60, // 外壁の厚さ (m)。当たり判定はこの外側の面で行う
   spinPeriod: 2 * Math.PI * Math.sqrt(4000 / 9.81), // 見た目の回転の周期 (秒)。地面で 1 g になる速さ
+  portRadius: 420, // 入港口の筒の内側の半径 (m)
+  portLength: 1400, // 入港口の筒の長さ (m)。影の側の蓋から外へ突き出す
+  gravity: 9.81, // 地面での重力 (m/s²)
+  airDensity: 1.2, // 地面での空気の密度 (kg/m³)
 };
 
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -87,4 +91,55 @@ export function hullContact(def, x, y, z) {
   }
   const distance = Math.hypot(Math.max(dr, 0), Math.max(dy, 0));
   return { inside: false, depth: 0, normal: null, distance };
+}
+
+// ---------------------------------------------------------------- 中 (円筒ローカル座標)
+// 中の物理は回らない座標系で計算する (設計書のシンプル版)。重力は軸から外向きに g · r / R。
+// 地面は円筒の内側の面 (半径 R)。入港口の筒の中では、筒の壁 (半径 portRadius) が地面になる。
+
+/** 高さ y の所の地面の、軸からの距離 (m)。 */
+export function groundRadius(def, y) {
+  return y >= -def.length / 2 ? def.radius : HABITAT.portRadius;
+}
+
+/** 中の点 (x,y,z) の、地面からの高さ (m)。下は軸から外向き。 */
+export function interiorHeight(def, x, y, z) {
+  return groundRadius(def, y) - Math.hypot(x, z);
+}
+
+/** 中の点での重力加速度 (軸から外向き) の大きさ (m/s²)。 */
+export function interiorGravity(def, r) {
+  return (HABITAT.gravity * r) / def.radius;
+}
+
+/** 中の点での空気の密度 (kg/m³)。地面で airDensity、軸では約 0.79 倍 (気温 288 K の空気が重力で押しつけられる分)。 */
+export function interiorAir(def, r) {
+  const R = def.radius;
+  return HABITAT.airDensity * Math.exp((HABITAT.gravity * (r * r - R * R)) / (2 * R * 287 * 288));
+}
+
+/** 入港口の筒の中にいるか (ここで円筒の座標系に入る)。 */
+export function inPort(def, x, y, z) {
+  const H = def.length / 2;
+  return y < -H && y > -H - HABITAT.portLength && Math.hypot(x, z) < HABITAT.portRadius - 20;
+}
+
+/** まだ円筒の中か (出るのは、入港口の筒の外の端を抜けたときだけ)。 */
+export function inInterior(def, x, y, z) {
+  const H = def.length / 2;
+  return y > -H - HABITAT.portLength - 30 && y < H + 300 && Math.hypot(x, z) < def.radius + 300;
+}
+
+/**
+ * 両端の蓋 (中から見た壁) との当たり判定。機体の中心を、蓋から margin (m) 離しておく。
+ * 恒星側の蓋は全面が壁。影の側の蓋は入港口の穴の外側だけが壁 (穴の縁と筒の壁は地面として ground.js が受け持つ)。
+ * @returns { depth, normal: [0, ±1, 0] } | null
+ */
+export function capContact(def, x, y, z, margin) {
+  const H = def.length / 2;
+  if (y > H - margin) return { depth: y - (H - margin), normal: [0, -1, 0] };
+  if (y < -H + margin && y > -H - 2 * margin && Math.hypot(x, z) > HABITAT.portRadius + margin) {
+    return { depth: -H + margin - y, normal: [0, 1, 0] };
+  }
+  return null;
 }
