@@ -387,14 +387,14 @@ export class Game {
         if (d < planet.frameEnter) enter = planet;
       }
       this.altitude = this.altitudeSea = nearest;
-      // 巡航の速さは、惑星だけでなく恒星の表面やスウォームのパネルまでの距離でも抑える
+      // 巡航の速さは、惑星だけでなく恒星の表面までの距離でも抑える
       const toStar = body.pos.distanceTo(this.sunPos) - this.star.radius;
       this.cruiseDist = Math.max(0, Math.min(nearest, toStar));
       this.swarmHit = null;
       if (this.system.swarm) {
         const p = this.shipSysPos(this._sysPos);
+        // パネルとの当たり判定に使う (巡航の速さには影響させない)
         this.swarmHit = nearestPanel(this.system.swarm, this.swarm.panels, p.x, p.y, p.z);
-        if (this.swarmHit) this.cruiseDist = Math.min(this.cruiseDist, this.swarmHit.surface);
       }
       if (enter) this.setFrame(enter);
     }
