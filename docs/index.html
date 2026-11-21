@@ -347,8 +347,11 @@ this.frame(this.acc / this.h, dt); // alpha = 次のステップまでの進み�
 <p>空間を一辺 10 光年の区画に分け、<b>区画の番号 (整数 3 つ) をハッシュして乱数の種にします</b>。種が同じなら乱数列は必ず同じなので、その区画の恒星は何度作っても同じになります。</p>
 
 <pre><code>export function sectorSeed(ix, iy, iz, salt = 0) {
-  let h = Math.imul(ix | 0, 73856093) ^ Math.imul(iy | 0, 19349663)
-        ^ Math.imul(iz | 0, 83492791) ^ Math.imul(salt + 1, 0x9e3779b1);
+  let h = Math.imul(salt + 1, 0x9e3779b1);
+  h = mixIn(h, ix);   // 軸ごとに順番に混ぜ込む (MurmurHash3 の 1 ブロック分)
+  h = mixIn(h, iy);
+  h = mixIn(h, iz);
+  h ^= 12;
   h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);   // ビットをよくかき混ぜる
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return (h ^ (h >>> 16)) >>> 0;

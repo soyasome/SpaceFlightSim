@@ -26,9 +26,27 @@ export const STAR_CLASSES = [
 const SYL_A = ['ve', 'ka', 'so', 'ar', 'ty', 'el', 'no', 'ri', 'ha', 'zu', 'mi', 'ce', 'do', 'ly', 'pa', 'qu', 'or', 'ta', 'is', 'um'];
 const SYL_B = ['lar', 'den', 'mis', 'thos', 'ran', 'vik', 'nor', 'ria', 'kon', 'sae', 'bel', 'tur', 'nys', 'gan', 'rex', 'lia', 'mon', 'dra', 'phi', 'zen'];
 
-/** 区画番号から乱数の種を作る。 */
+/** h に整数 v を 1 つ混ぜ込む (MurmurHash3 の 1 ブロック分)。 */
+function mixIn(h, v) {
+  v = Math.imul(v | 0, 0xcc9e2d51);
+  v = (v << 15) | (v >>> 17);
+  v = Math.imul(v, 0x1b873593);
+  h ^= v;
+  h = (h << 13) | (h >>> 19);
+  return (Math.imul(h, 5) + 0xe6546b64) | 0;
+}
+
+/**
+ * 区画番号から乱数の種を作る。
+ * 軸ごとに順番に混ぜ込む。3 軸の積を XOR でまとめるやり方だと、符号を反転した区画や
+ * 鏡像の区画が同じ種になることがあった (例: -1,-1,-1 と -1,1,1 と 1,-1,1)。
+ */
 export function sectorSeed(ix, iy, iz, salt = 0) {
-  let h = Math.imul(ix | 0, 73856093) ^ Math.imul(iy | 0, 19349663) ^ Math.imul(iz | 0, 83492791) ^ Math.imul(salt + 1, 0x9e3779b1);
+  let h = Math.imul(salt + 1, 0x9e3779b1);
+  h = mixIn(h, ix);
+  h = mixIn(h, iy);
+  h = mixIn(h, iz);
+  h ^= 12; // 混ぜ込んだバイト数 (MurmurHash3 の終端処理)
   h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return (h ^ (h >>> 16)) >>> 0;

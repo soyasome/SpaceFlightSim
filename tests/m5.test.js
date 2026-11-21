@@ -1,6 +1,6 @@
 import { test, assert, near } from './harness.js';
 import {
-  sectorStars, starsNear, nearestStar, starById, HOME_STAR, LY, AU, SECTOR, MIN_SPACING,
+  sectorStars, sectorSeed, starsNear, nearestStar, starById, HOME_STAR, LY, AU, SECTOR, MIN_SPACING,
 } from '../src/universe/galaxy.js';
 import { generateSystem, FRAME_EXIT, FRAME_ENTER } from '../src/universe/system.js';
 import { cruiseScale, CRUISE } from '../src/flight/cruise.js';
@@ -20,6 +20,30 @@ test('銀河: 同じ区画からは必ず同じ恒星ができ、出発地の恒
   let count = 0;
   for (let i = 0; i < 300; i++) count += sectorStars(100000 + i, -50000 + i * 3, 7 * i).length;
   assert(count > 200 && count < 500, `遠くの密度がおかしい: ${count}`);
+});
+
+test('銀河: 符号違いや鏡像の区画でも、同じ恒星が複製されない', () => {
+  // 以前は -1,-1,-1 / -1,1,1 / 1,-1,1 が同じ種になり、同じ恒星 (SORANCE) が 3 つできていた
+  const seeds = new Map();
+  const starSeeds = new Map();
+  const clones = new Map();
+  for (let ix = -3; ix <= 3; ix++) for (let iy = -3; iy <= 3; iy++) for (let iz = -3; iz <= 3; iz++) {
+    const key = `${ix},${iy},${iz}`;
+    const seed = sectorSeed(ix, iy, iz);
+    assert(!seeds.has(seed), `区画 ${key} と ${seeds.get(seed)} の種が同じ: ${seed}`);
+    seeds.set(seed, key);
+    for (const s of sectorStars(ix, iy, iz)) {
+      if (s.home) continue;
+      assert(!starSeeds.has(s.seed), `恒星 ${s.id} と ${starSeeds.get(s.seed)} の種が同じ: ${s.seed}`);
+      starSeeds.set(s.seed, s.id);
+      // 名前と区画内の位置が同じ = 複製された恒星
+      const local = s.pos.map((v, i) => (v - s.sector[i] * SECTOR).toFixed(6)).join(',');
+      const sig = `${s.name}@${local}`;
+      assert(!clones.has(sig), `恒星 ${s.id} と ${clones.get(sig)} が同じ (${s.name})`);
+      clones.set(sig, s.id);
+    }
+  }
+  assert(starSeeds.size > 150, `星が少ない: ${starSeeds.size}`);
 });
 
 test('銀河: 恒星どうしは近づきすぎず、区画をまたいでも守られる', () => {
