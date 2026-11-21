@@ -102,12 +102,18 @@ export class StarMap {
     this.bodies.textContent = '';
     const here = game.shipSysPos(game._v).clone();
     this._row(this.bodies, game.star.name, '恒星', formatDistance(here.length()), false, null);
-    for (const p of game.planets) {
+    // 恒星に近い惑星から順に並べ、衛星はその親のすぐ下に置く
+    const isMoon = (p) => p.def.parent !== null && p.def.parent !== undefined;
+    const ordered = [];
+    for (const p of game.planets.filter((q) => !isMoon(q)).sort((a, b) => a.sysPos.length() - b.sysPos.length())) {
+      ordered.push(p, ...game.planets.filter((q) => isMoon(q) && game.planets[q.def.parent] === p));
+    }
+    for (const p of ordered) {
       const selected = !!nav && nav.type === 'planet' && nav.planet === p;
       const dist = Math.max(0, p.sysPos.distanceTo(here) - p.radius);
       const air = p.gas ? '' : p.atmosphere ? ' ・大気あり' : ' ・大気なし';
       this._row(this.bodies, p.name, `${TYPE_LABEL[p.type] || p.type}${air}`, formatDistance(dist), selected,
-        pick(selected ? null : { type: 'planet', planet: p }), p.def.parent !== null && p.def.parent !== undefined ? 'indent' : '');
+        pick(selected ? null : { type: 'planet', planet: p }), isMoon(p) ? 'indent' : '');
     }
     if (game.system.belt) {
       const selected = !!nav && nav.type === 'belt';

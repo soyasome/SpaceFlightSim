@@ -506,3 +506,109 @@ export function createSkyMaterial(uniforms) {
       }`,
   });
 }
+
+/**
+ * 惑星の環のマテリアル。赤道面に置いた円盤 (THREE.RingGeometry) に描く。
+ * 半径ごとに濃さの違う細い輪を重ね、惑星の影に入った所は暗くする。
+ * 太陽と反対側から見ると、環を透けてきた光だけが届くので暗く見える。
+ * @param uniforms 惑星の uniform (中心・太陽の向き・明るさを共有する)
+ * @param rings { inner, outer (m), color [r, g, b] }
+ */
+export function createRingMaterial(uniforms, rings) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uPlanetCenter: uniforms.uPlanetCenter,
+      uSunDir: uniforms.uSunDir,
+      uSunI: uniforms.uSunI,
+      uRp: uniforms.uRp,
+      uInner: { value: rings.inner },
+      uOuter: { value: rings.outer },
+      uColor: { value: new THREE.Vector3(...rings.color) },
+    },
+    side: THREE.DoubleSide,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
+    vertexShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      varying vec3 vRel;
+      varying vec3 vNormal;
+      varying vec2 vLocal;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vRel = wp.xyz;
+        vNormal = normalize(mat3(modelMatrix) * normal);
+        vLocal = position.xz; // 円盤は赤道面 (XZ 平面) に寝かせてある
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      uniform vec3 uPlanetCenter;
+      uniform vec3 uSunDir;
+      uniform float uSunI;
+      uniform float uRp;
+      uniform float uInner;
+      uniform float uOuter;
+      uniform vec3 uColor;
+      varying vec3 vRel;
+      varying vec3 vNormal;
+      varying vec2 vLocal;
+
+      float h1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
+      float n1(float x) { // 1次元の値ノイズ
+        float i = floor(x), f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(h1(i), h1(i + 1.0), f);
+      }
+      float band(float t, float a, float b, float soft) {
+        return smoothstep(a - soft, a + soft, t) * (1.0 - smoothstep(b - soft, b + soft, t));
+      }
+
+      void main() {
+        #include <logdepthbuf_fragment>
+        float r = length(vLocal);
+        float t = (r - uInner) / (uOuter - uInner);
+        if (t < 0.0 || t > 1.0) discard;
+
+        // 内側の薄い環 (C)、明るく濃い環 (B)、カッシーニの間隙、外側の環 (A) とその中の細い隙間
+        float dens = 0.22 * band(t, 0.0, 0.22, 0.02)
+                   + 0.95 * band(t, 0.22, 0.56, 0.01)
+                   + 0.65 * band(t, 0.63, 0.97, 0.01);
+        dens *= 1.0 - 0.9 * band(t, 0.895, 0.905, 0.003);
+        // 細かい輪。1ピクセルに何本も入る所では、ちらつかないよう平らにする
+        float w = fwidth(t);
+        float fine = (n1(t * 45.0) - 0.5) * 0.5
+                   + (n1(t * 160.0) - 0.5) * 0.45 * (1.0 - smoothstep(0.2, 0.8, w * 160.0))
+                   + (n1(t * 600.0) - 0.5) * 0.4 * (1.0 - smoothstep(0.2, 0.8, w * 600.0));
+        float alpha = clamp(dens * (1.0 + fine), 0.0, 1.0) * 0.92;
+        if (alpha < 0.003) discard;
+
+        vec3 N = normalize(vNormal);
+        vec3 V = normalize(vRel); // カメラから見た向き
+        float sunSide = dot(N, uSunDir);
+        float camSide = -dot(N, V);
+        float lit = 0.3 + 0.7 * abs(sunSide);
+        // 太陽と反対側から見ている: 透けてきた光だけになる
+        if (sunSide * camSide < 0.0) lit *= 0.25 + 0.6 * (1.0 - alpha);
+
+        // 惑星の影
+        vec3 o = vRel - uPlanetCenter;
+        float tca = -dot(o, uSunDir);
+        vec3 perp = o + uSunDir * tca;
+        float shadow = tca > 0.0 ? smoothstep(uRp * 0.97, uRp * 1.02, length(perp)) : 1.0;
+
+        vec3 albedo = uColor * (0.55 + fine * 0.35) * (0.8 + 0.2 * t);
+        vec3 col = albedo * uSunI * 0.085 * lit * (0.03 + 0.97 * shadow);
+        gl_FragColor = vec4(col, alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        gl_FragColor.rgb *= alpha; // 重ね方は「色 × α を足す」(α を掛けておく)
+      }`,
+  });
+}

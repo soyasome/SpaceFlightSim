@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { makeTerrain } from '../terrain/terrainFn.js';
 import { PlanetLod } from './planetLod.js';
-import { makeAtmosphereUniforms, createTerrainMaterial, createSkyMaterial, TILE, TILE2 } from './atmosphere.js';
+import { makeAtmosphereUniforms, createTerrainMaterial, createSkyMaterial, createRingMaterial, TILE, TILE2 } from './atmosphere.js';
 import { Scatter } from './scatter.js';
 import { mulberry32 } from '../math/random.js';
 import { FRAME_ENTER, FRAME_EXIT } from '../universe/system.js';
@@ -25,18 +25,37 @@ function gasGeometry(def) {
     stripes.push([c[0] * k, c[1] * k, c[2] * k]);
   }
   const phase = rand() * 10;
+  // 大きな渦 (木星の大赤斑のようなもの)。spot = { lat, lon (rad), w, h (経度・緯度方向の半径, rad), color }
+  const spot = def.gas.spot;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i) / def.radius, y = pos.getY(i) / def.radius, z = pos.getZ(i) / def.radius;
+    const lon = Math.atan2(z, x);
+    const lat = Math.asin(Math.max(-1, Math.min(1, y)));
     // 縞を少し波打たせる
-    const wobble = Math.sin(Math.atan2(z, x) * 5 + y * 9 + phase) * 0.012 + Math.sin(Math.atan2(z, x) * 11 - phase) * 0.006;
-    const t = (Math.asin(Math.max(-1, Math.min(1, y))) / Math.PI + 0.5 + wobble) * count;
+    const wobble = Math.sin(lon * 5 + y * 9 + phase) * 0.012 + Math.sin(lon * 11 - phase) * 0.006;
+    const t = (lat / Math.PI + 0.5 + wobble) * count;
     const i0 = Math.max(0, Math.min(count - 1, Math.floor(t)));
     let f = t - i0;
     f = f * f * (3 - 2 * f);
     const a = stripes[i0], b = stripes[i0 + 1];
-    colors[i * 4] = Math.round(Math.min(1, a[0] + (b[0] - a[0]) * f) * 255);
-    colors[i * 4 + 1] = Math.round(Math.min(1, a[1] + (b[1] - a[1]) * f) * 255);
-    colors[i * 4 + 2] = Math.round(Math.min(1, a[2] + (b[2] - a[2]) * f) * 255);
+    let r = a[0] + (b[0] - a[0]) * f, g = a[1] + (b[1] - a[1]) * f, bl = a[2] + (b[2] - a[2]) * f;
+    if (spot) {
+      let dl = lon - spot.lon;
+      dl -= Math.round(dl / (2 * Math.PI)) * 2 * Math.PI;
+      const e = Math.hypot((dl * Math.cos(lat)) / spot.w, (lat - spot.lat) / spot.h);
+      if (e < 1.4) {
+        // 中心ほど濃く、縁は明るい輪で縞から切り離す
+        const core = 1 - Math.min(1, Math.max(0, (e - 0.55) / 0.45));
+        const rim = Math.max(0, 1 - Math.abs(e - 1.05) / 0.25) * 0.35;
+        const k = 0.5;
+        r = r + (spot.color[0] * k - r) * core + rim * 0.25;
+        g = g + (spot.color[1] * k - g) * core + rim * 0.22;
+        bl = bl + (spot.color[2] * k - bl) * core + rim * 0.18;
+      }
+    }
+    colors[i * 4] = Math.round(Math.min(1, r) * 255);
+    colors[i * 4 + 1] = Math.round(Math.min(1, g) * 255);
+    colors[i * 4 + 2] = Math.round(Math.min(1, bl) * 255);
     colors[i * 4 + 3] = 0;
   }
   geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 4, true));
@@ -49,7 +68,7 @@ function gasGeometry(def) {
  *
  * def (src/universe/system.js が作る):
  *   { key, name, type, seed, radius, position (星系座標), rotationPeriod, axialTilt, gravity,
- *     terrain, atmosphere | null, skyLight, gas? }
+ *     terrain, atmosphere | null, skyLight, gas?, rings? }
  * sunIntensity: 恒星の明るさ (地表と空の明るさに効く)
  */
 export class Planet {
@@ -105,6 +124,18 @@ export class Planet {
       );
       this.sky.frustumCulled = false;
       this.group.add(this.sky);
+    }
+
+    // 環 (赤道面の円盤)。惑星と一緒に回るが、模様は同心円なので見た目は変わらない。
+    // 当たり判定はない (機体はすり抜ける)
+    this.rings = null;
+    if (def.rings) {
+      const geo = new THREE.RingGeometry(def.rings.inner, def.rings.outer, 256, 1);
+      geo.rotateX(-Math.PI / 2); // XY 平面 → 赤道面 (XZ 平面)。自転軸はローカル Y
+      this.rings = new THREE.Mesh(geo, createRingMaterial(this.uniforms, def.rings));
+      this.rings.frustumCulled = false;
+      this.rings.renderOrder = 1; // 大気の殻より後に重ねる
+      this.group.add(this.rings);
     }
 
     this.updateRotation(0);
@@ -171,6 +202,10 @@ export class Planet {
     if (this.sky) {
       this.sky.geometry.dispose();
       this.sky.material.dispose();
+    }
+    if (this.rings) {
+      this.rings.geometry.dispose();
+      this.rings.material.dispose();
     }
   }
 }

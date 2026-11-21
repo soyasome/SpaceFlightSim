@@ -228,7 +228,7 @@ this.frame(this.acc / this.h, dt); // alpha = 次のステップまでの進み�
   <div><small>float64 で表せる最小の刻み (CPU)</small><strong id="pF64"></strong></div>
   <div><small>この距離にあるもの</small><strong id="pWhat" style="font-size:15px"></strong></div>
 </div>
-<figcaption>惑星 AURELIA の半径 (400 km) の時点で float32 の刻みは約 3 cm。1 天文単位では約 16 km。float64 でも 1 光年で 2 m になります。メートル単位の 1 つの座標系では足りません。</figcaption>
+<figcaption>惑星 TERRA の半径 (400 km) の時点で float32 の刻みは約 3 cm。1 天文単位では約 16 km。float64 でも 1 光年で 2 m になります。メートル単位の 1 つの座標系では足りません。</figcaption>
 </figure>
 
 <h3>解き方: 座標系を入れ子にして、乗り換える</h3>
@@ -375,7 +375,7 @@ this.frame(this.acc / this.h, dt); // alpha = 次のステップまでの進み�
 </ul>
 
 <h3>星系</h3>
-<p>恒星ごとに決まる種から、惑星の数・種類 (海洋・砂漠・氷・溶岩・岩石・ガス巨星)・半径・自転周期・大気の色、衛星、小惑星帯、敵の哨戒隊を決めます。惑星は地形の種を持つだけで、地形そのものは近づいたときに初めて計算されます (次章)。出発地の HELIA 星系だけは手で配置してあります。</p>
+<p>恒星ごとに決まる種から、惑星の数・種類 (海洋・砂漠・氷・溶岩・岩石・ガス巨星)・半径・自転周期・大気の色、衛星、小惑星帯、敵の哨戒隊を決めます。惑星は地形の種を持つだけで、地形そのものは近づいたときに初めて計算されます (次章)。出発地の SOL 星系だけは太陽系に似せて手で配置してあります。</p>
 
 <div class="cut"><b>割り切った点</b><p>恒星の密度は銀河のどこでも同じで、渦巻きの腕や中心といった大きな構造はありません。背景の天の川は見た目だけの別の星空です。</p></div>
 </section>
@@ -396,7 +396,7 @@ this.frame(this.acc / this.h, dt); // alpha = 次のステップまでの進み�
   <button id="tReset">全体に戻す</button>
 </div>
 <canvas id="ter" width="720" height="360"></canvas>
-<figcaption>出発地の惑星 AURELIA (半径 400 km) の標高関数を、緯度経度の地図として描いたもの。クリックした場所が中心になります。拡大してから minWL を大きくすると、大陸の形はそのままで細部だけが消えます。遠くの粗いメッシュはこうして軽く作られます。</figcaption>
+<figcaption>出発地の惑星 TERRA (半径 400 km) の標高関数を、緯度経度の地図として描いたもの。クリックした場所が中心になります。拡大してから minWL を大きくすると、大陸の形はそのままで細部だけが消えます。遠くの粗いメッシュはこうして軽く作られます。</figcaption>
 </figure>
 
 <h3>材料: パーリンノイズと fBm</h3>
@@ -673,7 +673,7 @@ function fmtLen(m) {
 // ---------------------------------------------------------------- 2: 精度
 (function () {
   const marks = [
-    [1, '機体のすぐそば'], [1e3, '近くの敵機'], [4e5, '惑星 AURELIA の半径'], [1e7, '原点を付け替える距離'],
+    [1, '機体のすぐそば'], [1e3, '近くの敵機'], [4e5, '惑星 TERRA の半径'], [1e7, '原点を付け替える距離'],
     [3.8e8, '地球と月の距離ほど'], [1.5e11, '恒星から 1 天文単位'], [5e12, '星系の外縁'], [9.46e15, '1 光年'], [5e16, '隣の恒星 (約 5 光年)'],
   ];
   function upd() {
@@ -867,7 +867,7 @@ const $ = (id) => document.getElementById(id);
 {
   const cv = $('ter'), g = cv.getContext('2d');
   const W = cv.width, H = cv.height;
-  const terrain = makeTerrain({ seed: 2024, radius: 400e3 }); // AURELIA
+  const terrain = makeTerrain({ seed: 2024, radius: 400e3 }); // TERRA
   const WLS = [1, 300, 2000, 8000, 30000, 120000];
   let lon0 = 0, lat0 = 0;
   const img = g.createImageData(W, H);

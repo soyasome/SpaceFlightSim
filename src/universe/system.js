@@ -16,7 +16,7 @@ export const TYPE_LABEL = {
 export const FRAME_ENTER = 6;
 export const FRAME_EXIT = 6.6;
 
-// 大気の基準値 (AURELIA と同じ、地球に似た空)
+// 大気の基準値 (TERRA と同じ、地球に似た空)
 const AIR_EARTH = {
   surfaceDensity: 1.225, height: 60e3, scaleHeightR: 7000, scaleHeightM: 1400,
   betaR: [5.2e-6, 12.1e-6, 29.6e-6], betaM: 5e-6,
@@ -115,29 +115,134 @@ function makeBody(key, name, type, seed, radius, position, rand, parent = null) 
   };
 }
 
-/** 出発地の星系。AURELIA と小惑星帯の位置関係は M1〜M4 のまま。 */
+/** makeBody で作った天体の値を、手で決めた値で上書きする (terrain は項目ごとに混ぜる)。 */
+function customize(body, { terrain, ...rest }) {
+  if (terrain) body.terrain = { ...body.terrain, ...terrain };
+  return Object.assign(body, rest);
+}
+
+const NO_AIR = { atmosphere: null, skyLight: [0.02, 0.02, 0.025] };
+// ガス巨星の大気。既定の青い空のままだと縞の色が白くかすむので、惑星の色に合わせて薄く色を付ける
+const gasAir = (betaR) => ({
+  atmosphere: {
+    surfaceDensity: 4, height: 220e3, scaleHeightR: 28e3, scaleHeightM: 9000,
+    betaR: betaR.map((b) => b * 1e-6), betaM: 0.3e-6,
+  },
+});
+
+/**
+ * 出発地の星系 (太陽系に似せたもの)。名前はラテン語。
+ * TERRA (planets[0]) と小惑星帯の位置関係は M1〜M4 のまま。
+ * 大きさは TERRA (半径 400 km) を基準に本物の比率へ寄せ、木星だけは上限に収まるよう少し小さくしてある。
+ * 軌道半径は本物と同じ天文単位。
+ */
 function homeSystem(star) {
   const start = [0.5e11, -0.45e11, -1.3e11]; // 開始位置 (恒星から約1天文単位)
   const rand = mulberry32(star.seed);
-  const aureliaPos = [start[0] + 0.9e6, start[1] - 0.3e6, start[2] - 3.2e6];
-  const aurelia = {
-    key: 'home:0', name: 'AURELIA', type: 'terran', seed: 2024, radius: 400e3, position: aureliaPos, parent: null,
+  const terraPos = [start[0] + 0.9e6, start[1] - 0.3e6, start[2] - 3.2e6];
+  // 恒星のまわり: 軌道半径 au、方位 deg、軌道面からの傾き incl (rad)
+  const orbit = (au, deg, incl = 0) => {
+    const r = au * AU, a = (deg * Math.PI) / 180;
+    return [Math.cos(a) * r, Math.sin(incl) * r, Math.sin(a) * r];
+  };
+  // 親の天体のまわり: 中心からの距離 dist (m)、方位 deg
+  const around = (p, dist, deg, up = 0.05) => {
+    const a = (deg * Math.PI) / 180;
+    return [p[0] + Math.cos(a) * dist, p[1] + dist * up, p[2] + Math.sin(a) * dist];
+  };
+
+  const planets = [];
+  const add = (name, type, seed, radius, position, parent, opts) => {
+    const body = makeBody(`home:${planets.length}`, name, type, seed, radius, position, rand, parent);
+    planets.push(customize(body, opts));
+    return planets.length - 1;
+  };
+
+  // 0: 地球。地形は M2 から変えていない既定のもの (terrain: null)
+  planets.push({
+    key: 'home:0', name: 'TERRA', type: 'terran', seed: 2024, radius: 400e3, position: terraPos, parent: null,
     rotationPeriod: 7200, axialTilt: 0.3, gravity: 9.81,
-    terrain: null, // null = M2 から変えていない既定の地形
+    terrain: null,
     atmosphere: { ...AIR_EARTH, sunIntensity: 22 },
     skyLight: [0.3, 0.42, 0.62],
-  };
-  const planets = [
-    aurelia,
-    // AURELIA の衛星: 大気がなく、近いので着陸の練習になる
-    makeBody('home:1', 'AURELIA a', 'rock', 77, 110e3, [aureliaPos[0] - 5.2e6, aureliaPos[1] + 1.4e6, aureliaPos[2] - 6.4e6], rand, 0),
-    makeBody('home:2', 'HELIA I', 'lava', 311, 260e3, [0.42 * AU, 0.01 * AU, 0.2 * AU], rand),
-    makeBody('home:3', 'HELIA III', 'desert', 512, 330e3, [1.1 * AU, -0.05 * AU, -1.25 * AU], rand),
-    makeBody('home:4', 'HELIA IV', 'gas', 901, 2600e3, [-2.6 * AU, 0.1 * AU, -2.2 * AU], rand),
-    makeBody('home:5', 'HELIA V', 'ice', 1203, 300e3, [-5.5 * AU, -0.3 * AU, 4.2 * AU], rand),
-  ];
-  planets.push(makeBody('home:6', 'HELIA IV a', 'ice', 1204, 120e3,
-    [planets[4].position[0] + 22e6, planets[4].position[1] + 3e6, planets[4].position[2] - 14e6], rand, 4));
+  });
+  // 月: 大気がなく、近いので着陸の練習になる
+  add('LUNA', 'rock', 77, 110e3, [terraPos[0] - 5.2e6, terraPos[1] + 1.4e6, terraPos[2] - 6.4e6], 0,
+    { ...NO_AIR, gravity: 1.62, terrain: { tint: [1, 1, 1.02] } });
+
+  // 水星: 灰色の岩の天体
+  add('MERCURIUS', 'rock', 311, 152e3, orbit(0.39, 40, 0.06), null,
+    { ...NO_AIR, gravity: 3.7, rotationPeriod: 16000, axialTilt: 0.01, terrain: { tint: [1.05, 1, 0.95] } });
+
+  // 金星: 黄色い濃い雲に包まれた乾いた惑星。自転軸がほぼ逆さ (= 逆向きに自転する)
+  add('VENUS', 'desert', 512, 380e3, orbit(0.72, -120, 0.03), null, {
+    gravity: 8.9, rotationPeriod: 20000, axialTilt: 3.1,
+    terrain: { tint: [1.2, 1.05, 0.78] },
+    atmosphere: {
+      surfaceDensity: 2.4, height: 80e3, scaleHeightR: 10000, scaleHeightM: 4000,
+      betaR: [10e-6, 8.5e-6, 4e-6], betaM: 20e-6,
+    },
+    skyLight: [0.62, 0.5, 0.28],
+  });
+
+  // 火星: 赤い砂漠と薄い大気、小さな衛星が2つ
+  const mars = add('MARS', 'desert', 640, 212e3, orbit(1.52, -30, 0.02), null, {
+    gravity: 3.7, rotationPeriod: 7400, axialTilt: 0.44,
+    terrain: { tint: [1.38, 0.7, 0.48] },
+    atmosphere: {
+      surfaceDensity: 0.15, height: 45e3, scaleHeightR: 9000, scaleHeightM: 2500,
+      betaR: [9e-6, 7.5e-6, 5.5e-6], betaM: 8e-6,
+    },
+    skyLight: [0.55, 0.4, 0.3],
+  });
+  const mp = planets[mars].position;
+  add('PHOBOS', 'rock', 641, 55e3, around(mp, 2.4e6, 30), mars, { ...NO_AIR, gravity: 1.1, terrain: { tint: [0.78, 0.7, 0.62] } });
+  add('DEIMOS', 'rock', 642, 50e3, around(mp, 4.2e6, 200), mars, { ...NO_AIR, gravity: 1.05, terrain: { tint: [0.82, 0.74, 0.66] } });
+
+  // 木星: 茶色と白の縞と大赤斑、ガリレオ衛星
+  const iup = add('IUPPITER', 'gas', 901, 3600e3, orbit(5.2, 150, 0.02), null, {
+    gravity: 22, rotationPeriod: 3000, axialTilt: 0.05, ...gasAir([0.9, 0.75, 0.5]),
+    gas: {
+      bands: [[0.9, 0.76, 0.58], [0.66, 0.45, 0.32], [0.95, 0.9, 0.82], [0.78, 0.6, 0.45]], count: 16,
+      spot: { lat: -0.38, lon: 1.2, w: 0.22, h: 0.09, color: [0.78, 0.36, 0.22] },
+    },
+  });
+  const jp = planets[iup].position;
+  add('IO', 'rock', 902, 115e3, around(jp, 28e6, 10), iup, { ...NO_AIR, gravity: 1.8, terrain: { tint: [1.7, 1.5, 0.6] } });
+  add('EUROPA', 'ice', 903, 100e3, around(jp, 38e6, 100), iup, { ...NO_AIR, gravity: 1.3, terrain: { tint: [1, 0.93, 0.84] } });
+  add('GANYMEDES', 'rock', 904, 165e3, around(jp, 50e6, 190), iup, { ...NO_AIR, gravity: 1.43, terrain: { tint: [1.08, 1.03, 0.98] } });
+  add('CALLISTO', 'rock', 905, 150e3, around(jp, 66e6, 285), iup, { ...NO_AIR, gravity: 1.24, terrain: { tint: [0.7, 0.67, 0.64] } });
+
+  // 土星: 淡い黄色の縞と環、オレンジ色のもやに包まれた衛星
+  const sat = add('SATURNUS', 'gas', 1100, 3000e3, orbit(9.5, -150, 0.04), null, {
+    gravity: 10.4, rotationPeriod: 3200, axialTilt: 0.47, ...gasAir([0.9, 0.8, 0.55]),
+    gas: { bands: [[0.88, 0.72, 0.46], [0.72, 0.56, 0.34], [0.95, 0.86, 0.64]], count: 12 },
+    rings: { inner: 3000e3 * 1.24, outer: 3000e3 * 2.27, color: [0.86, 0.78, 0.62] },
+  });
+  add('TITAN', 'ice', 1101, 160e3, around(planets[sat].position, 30e6, 60), sat, {
+    gravity: 1.35,
+    terrain: { tint: [0.8, 0.62, 0.42] },
+    atmosphere: {
+      surfaceDensity: 1.5, height: 60e3, scaleHeightR: 15000, scaleHeightM: 4000,
+      betaR: [9e-6, 6e-6, 2.5e-6], betaM: 18e-6,
+    },
+    skyLight: [0.5, 0.35, 0.18],
+  });
+
+  // 天王星: 縞の目立たない水色。自転軸が横倒し
+  add('URANUS', 'gas', 1300, 1600e3, orbit(19.2, 60, 0.01), null, {
+    gravity: 8.9, rotationPeriod: 5000, axialTilt: 1.71, ...gasAir([0.5, 1.0, 1.15]),
+    gas: { bands: [[0.64, 0.86, 0.9], [0.6, 0.82, 0.87], [0.68, 0.89, 0.92]], count: 4 },
+  });
+
+  // 海王星: 深い青と、大きな衛星
+  const nep = add('NEPTUNUS', 'gas', 1500, 1550e3, orbit(30, -100, 0.03), null, {
+    gravity: 11.2, rotationPeriod: 4800, axialTilt: 0.49, ...gasAir([0.2, 0.4, 1.1]),
+    gas: { bands: [[0.2, 0.36, 0.95], [0.14, 0.26, 0.85], [0.32, 0.5, 1]], count: 6 },
+  });
+  add('TRITON', 'ice', 1501, 85e3, around(planets[nep].position, 16e6, 140), nep,
+    { ...NO_AIR, gravity: 1.2, terrain: { tint: [1.05, 0.95, 0.92] } });
+
   return {
     star, planets, start,
     belt: { position: [start[0], start[1] - 600, start[2] - 9000], seed: 9 },

@@ -2,7 +2,7 @@ import { test, assert, near } from './harness.js';
 import {
   sectorStars, starsNear, nearestStar, starById, HOME_STAR, LY, AU, SECTOR, MIN_SPACING,
 } from '../src/universe/galaxy.js';
-import { generateSystem, FRAME_EXIT } from '../src/universe/system.js';
+import { generateSystem, FRAME_EXIT, FRAME_ENTER } from '../src/universe/system.js';
 import { cruiseScale, CRUISE } from '../src/flight/cruise.js';
 import { makeTerrain } from '../src/terrain/terrainFn.js';
 import { formatDistance, formatSpeed, formatTime } from '../src/ui/hud.js';
@@ -88,13 +88,31 @@ test('星系: 何度作っても同じで、天体の座標系が重ならず、
   for (const t of ['terran', 'desert', 'ice', 'lava', 'rock', 'gas']) assert(types.has(t), `${t} が一度も出ない`);
 });
 
-test('星系: 出発地は M1〜M4 と同じ配置 (AURELIA と小惑星帯が開始位置のそばにある)', () => {
+test('星系: 出発地は M1〜M4 と同じ配置 (TERRA と小惑星帯が開始位置のそばにある)', () => {
   const sys = generateSystem(HOME_STAR);
   const a = sys.planets[0];
-  assert(a.name === 'AURELIA' && a.seed === 2024 && a.radius === 400e3 && a.terrain === null, 'AURELIA が変わった');
-  near(dist3(a.position, sys.start), Math.hypot(0.9e6, 0.3e6, 3.2e6), 1, '開始位置から AURELIA まで');
+  assert(a.name === 'TERRA' && a.seed === 2024 && a.radius === 400e3 && a.terrain === null, 'TERRA が変わった');
+  near(dist3(a.position, sys.start), Math.hypot(0.9e6, 0.3e6, 3.2e6), 1, '開始位置から TERRA まで');
   near(dist3(sys.belt.position, sys.start), Math.hypot(600, 9000), 1, '開始位置から小惑星帯まで');
   near(Math.hypot(...sys.start), Math.hypot(0.5e11, 0.45e11, 1.3e11), 1, '恒星までの距離');
+});
+
+test('星系: 出発地は太陽系に似せてある (8つの惑星が本物と同じ順に並び、土星に環がある)', () => {
+  const sys = generateSystem(HOME_STAR);
+  assert(HOME_STAR.name === 'SOL', '恒星の名前');
+  const order = sys.planets.filter((p) => p.parent === null)
+    .sort((a, b) => Math.hypot(...a.position) - Math.hypot(...b.position)).map((p) => p.name);
+  const expect = ['MERCURIUS', 'VENUS', 'TERRA', 'MARS', 'IUPPITER', 'SATURNUS', 'URANUS', 'NEPTUNUS'];
+  assert(JSON.stringify(order) === JSON.stringify(expect), `惑星の並び: ${order.join(', ')}`);
+  const byName = Object.fromEntries(sys.planets.map((p) => [p.name, p]));
+  const parentOf = (n) => sys.planets[byName[n].parent].name;
+  for (const [m, p] of [['LUNA', 'TERRA'], ['PHOBOS', 'MARS'], ['DEIMOS', 'MARS'], ['IO', 'IUPPITER'], ['EUROPA', 'IUPPITER'],
+    ['GANYMEDES', 'IUPPITER'], ['CALLISTO', 'IUPPITER'], ['TITAN', 'SATURNUS'], ['TRITON', 'NEPTUNUS']]) {
+    assert(parentOf(m) === p, `${m} の親が ${parentOf(m)}`);
+  }
+  const rings = byName.SATURNUS.rings;
+  assert(rings && rings.inner > byName.SATURNUS.radius && rings.outer < byName.SATURNUS.radius * FRAME_ENTER, '土星の環');
+  assert(byName.IUPPITER.gas.spot, '木星の大赤斑');
 });
 
 test('巡航: 倍率は距離とともに途切れなく増え、近くでは今までと同じ', () => {
@@ -167,7 +185,7 @@ test('地形: 種類ごとに、海・乾いた地面・光る溶岩が正しく
   assert(lava.water === 0 && lava.glow > 100 && lava.glow <= lava.low, `溶岩: ${JSON.stringify(lava)}`);
 });
 
-test('地形: 定義を省いた惑星は M2 と同じ地形になる (AURELIA が変わらない)', () => {
+test('地形: 定義を省いた惑星は M2 と同じ地形になる (TERRA が変わらない)', () => {
   const a = makeTerrain({ seed: 2024, radius: 400e3 });
   const b = makeTerrain({ seed: 2024, radius: 400e3, terrain: null });
   const c = makeTerrain({ seed: 2024, radius: 400e3, terrain: { type: 'terran', land: 0.05, cAmp: 2800, mAmp: 6500, hAmp: 320 } });

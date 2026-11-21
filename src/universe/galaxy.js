@@ -52,7 +52,7 @@ function pickClass(r) {
 /** 出発地の恒星。配置は手で決めてある。 */
 export const HOME_STAR = {
   id: '0,0,0,0', sector: [0, 0, 0], index: 0, pos: [5, 5, 5], seed: 2024, home: true,
-  name: 'HELIA', cls: 'G', label: '黄色矮星', color: [1.0, 0.96, 0.86], radius: SUN_RADIUS, lum: 1,
+  name: 'SOL', cls: 'G', label: '黄色矮星', color: [1.0, 0.96, 0.86], radius: SUN_RADIUS, lum: 1,
 };
 
 const cache = new Map();

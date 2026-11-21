@@ -8,7 +8,7 @@ const smooth = (a, b, x) => {
 };
 const lerp = (a, b, t) => a + (b - a) * t;
 
-/** 地形の既定値 (海洋惑星 AURELIA)。 */
+/** 地形の既定値 (海洋惑星 TERRA)。 */
 const DEFAULT_TERRAIN = { type: 'terran', land: 0.05, cAmp: 2800, mAmp: 6500, hAmp: 320, tint: null };
 
 /** クレーターの深さの倍率 (種類ごとの既定値)。大気や水のある天体では風化して浅い。 */
