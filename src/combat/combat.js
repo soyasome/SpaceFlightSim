@@ -78,7 +78,7 @@ export class Combat {
       altitudeAt: (pos) => self.altitudeAt(pos),
       upAt: (pos, out) => {
         if (!game.frame) return false;
-        out.copy(pos).normalize();
+        game.frame.upAt(pos, out);
         return true;
       },
       aeroAt: (pos) => game.envAt(pos, _scratchEnv).aero,
@@ -92,23 +92,20 @@ export class Combat {
 
   /** 地面からのおおよその高さ。細かい凹凸は省く (呼ぶ回数が多いので軽くする)。 */
   altitudeAt(pos) {
-    const planet = this.game.frame;
-    if (!planet) return Infinity;
-    const r = pos.length();
-    const h = planet.terrain.height(pos.x / r, pos.y / r, pos.z / r, 20);
-    return r - planet.radius - Math.max(0, h);
+    const frame = this.game.frame;
+    if (!frame) return Infinity;
+    return frame.roughHeightAbove(pos);
   }
 
   /** 線分 from→to が地形か小惑星に当たるか。当たった位置を out に入れる。 */
   solidHit(from, to, out) {
-    const planet = this.game.frame;
-    if (planet) {
-      const r = to.length();
-      if (r < planet.radius + 12000) {
-        const h = planet.terrain.height(to.x / r, to.y / r, to.z / r, 20);
-        const ground = planet.radius + Math.max(0, h);
-        if (r < ground) {
-          out.copy(to).multiplyScalar(ground / r);
+    const frame = this.game.frame;
+    if (frame) {
+      if (frame.seaLevelAt(to) < 12000) {
+        const alt = frame.roughHeightAbove(to);
+        if (alt < 0) {
+          // 真下の地面の上へ戻した点
+          frame.upAt(to, out).multiplyScalar(-alt).add(to);
           return true;
         }
       }
@@ -221,12 +218,13 @@ export class Combat {
     const def = TYPES[type] || TYPES.raider;
     const ship = new Ship(def.params);
     const b = ship.body;
-    const up = this.game.frame ? pos.clone().normalize() : null;
+    const frame = this.game.frame;
+    const up = frame ? frame.upAt(pos, new THREE.Vector3()) : null;
     b.pos.copy(pos);
     // 地面の中や地面すれすれには出さない
     if (up) {
       const alt = this.altitudeAt(b.pos);
-      if (alt < 500) b.pos.setLength(b.pos.length() + 500 - alt);
+      if (alt < 500) b.pos.addScaledVector(up, 500 - alt);
     }
     this._orient(dir, up, b.quat);
     b.vel.set(0, 0, -speed).applyQuaternion(b.quat);
@@ -358,7 +356,7 @@ export class Combat {
     types.length = Math.min(types.length, room);
 
     const pb = game.ship.body;
-    const up = game.frame ? pb.pos.clone().normalize() : null;
+    const up = game.frame ? game.frame.upAt(pb.pos, new THREE.Vector3()) : null;
     // 自機の前方、やや横にずれた 5〜7km 先に出す
     const ahead = new THREE.Vector3(0, 0, -1).applyQuaternion(pb.quat);
     if (up) ahead.addScaledVector(up, -ahead.dot(up));
@@ -370,8 +368,8 @@ export class Combat {
       const pos = pb.pos.clone().addScaledVector(ahead, 5000 + this.rand() * 2000).addScaledVector(side, 600 + 400 * i);
       if (up) {
         // 地面から十分な高さを確保する
-        const ground = pos.length() - this.altitudeAt(pos);
-        pos.setLength(Math.max(pos.length(), ground + 1500));
+        const alt = this.altitudeAt(pos);
+        if (alt < 1500) pos.addScaledVector(game.frame.upAt(pos, new THREE.Vector3()), 1500 - alt);
       }
       const dir = pb.pos.clone().sub(pos).normalize();
       this.spawnEnemy(type, pos, dir, { home: pb.pos, alerted: true });

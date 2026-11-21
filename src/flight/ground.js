@@ -52,12 +52,12 @@ const DEEP = 2; // 真下の地面からこれより深くめり込んだ点は�
 const MAX_DEPTH = 2;
 const MAX_POINT_ACCEL = 400; // 1点が機体に与える力の上限 (機体の質量 × この加速度, m/s²)
 
-const _up = new Vector3();
 const _t1 = new Vector3();
 const _t2 = new Vector3();
 const _p0 = new Vector3();
 const _p1 = new Vector3();
 const _p2 = new Vector3();
+const _upQ = new Vector3();
 const _n = new Vector3();
 const _r = new Vector3();
 const _rw = new Vector3();
@@ -74,22 +74,26 @@ const _upP = new Vector3();
 const _np = new Vector3();
 const _nv = new Vector3();
 
+/** 点 q を、その真下の地面の上へ下ろす (q を書き換える)。 */
+function dropToGround(frame, q) {
+  const h = frame.heightAbove(q);
+  return q.addScaledVector(frame.upAt(q, _upQ), -h);
+}
+
 /**
- * 点 p の真下の地面の法線を out に入れる。g: p の真下の地面の半径 (呼び出し側で求めたもの)。
+ * 点 p の真下の地面の法線を out に入れる。h: p の地面からの高さ (呼び出し側で求めたもの)。
  * p のまわり SAMPLE (m) の2点との高さの差から求める。
+ * _upP に p での真上の向き、_p0 に p の真下の地面の点が残る (呼び出し側が使う)。
  */
-function groundNormal(planet, p, g, out) {
-  const r = p.length();
-  _upP.copy(p).divideScalar(r);
+function groundNormal(frame, p, h, out) {
+  frame.upAt(p, _upP);
   _t1.set(0, 1, 0);
   if (Math.abs(_upP.y) > 0.9) _t1.set(1, 0, 0);
   _t1.cross(_upP).normalize();
   _t2.crossVectors(_upP, _t1);
-  _p0.copy(_upP).multiplyScalar(g);
-  _p1.copy(_p0).addScaledVector(_t1, SAMPLE);
-  _p1.multiplyScalar(planet.groundRadiusAt(_p1) / _p1.length());
-  _p2.copy(_p0).addScaledVector(_t2, SAMPLE);
-  _p2.multiplyScalar(planet.groundRadiusAt(_p2) / _p2.length());
+  _p0.copy(p).addScaledVector(_upP, -h);
+  dropToGround(frame, _p1.copy(_p0).addScaledVector(_t1, SAMPLE));
+  dropToGround(frame, _p2.copy(_p0).addScaledVector(_t2, SAMPLE));
   out.crossVectors(_p1.sub(_p0), _p2.sub(_p0)).normalize();
   if (out.dot(_upP) < 0) out.negate();
   return out;
@@ -97,7 +101,9 @@ function groundNormal(planet, p, g, out) {
 
 /**
  * 地面との接触。脚と機体の各点を「ばね + ダンパー + 摩擦」で地面に押し返す。
- * 機体は惑星ローカル座標 (地面が静止している座標) にあること。
+ * 機体は座標系 (地面が静止している座標) のローカル座標にあること。
+ * 地面は座標系の upAt (真上の向き) と heightAbove (地面からの高さ) だけで調べるので、
+ * 球の惑星でも、下の向きが違う座標系 (円筒の内側など) でも同じ処理で済む。
  * 地面は点ごとに、その点の真下とその近く2点から求めた平面で近似する。
  * (崖の壁に機首から突っ込んだときも、壁に当たった点が壁から押し返される)
  */
@@ -120,22 +126,19 @@ export class GroundContact {
 
   /**
    * @param body 剛体 (力とトルクが積算される)
-   * @param planet groundRadiusAt(local) を持つもの
+   * @param frame upAt(p, out) と heightAbove(p) を持つ座標系 (Planet など)
    * @param gear 脚の出具合 0..1
    * @param brake ブレーキをかけているか
    */
-  apply(body, planet, gear, brake, dt) {
+  apply(body, frame, gear, brake, dt) {
     this.reset();
-    const r = body.pos.length();
-    _up.copy(body.pos).divideScalar(r);
-    const g0 = planet.groundRadiusAt(body.pos);
-    const alt = r - g0;
+    const alt = frame.heightAbove(body.pos);
     if (alt > REACH_ALT) {
       this.prev.fill(false);
       return this;
     }
     // 機体の真下の地面の向き (静止摩擦の判定などに使う)
-    groundNormal(planet, body.pos, g0, this.normal);
+    groundNormal(frame, body.pos, alt, this.normal);
 
     _qi.copy(body.quat).invert();
     const gearActive = gear > 0.3;
@@ -152,11 +155,10 @@ export class GroundContact {
       _rw.copy(_pt).applyQuaternion(body.quat);
       // この点の真下の地面より下にあるか
       _pw.copy(body.pos).add(_rw);
-      const rp = _pw.length();
-      const gp = planet.groundRadiusAt(_pw);
-      if (rp >= gp) { this.prev[i] = false; continue; }
+      const hp = frame.heightAbove(_pw);
+      if (hp >= 0) { this.prev[i] = false; continue; }
       let depth;
-      if (gp - rp > DEEP && r > g0) {
+      if (-hp > DEEP && alt > 0) {
         // 深くめり込んだ (崖の壁を抜けて、台地の下に入った)。真下の地面 (台地の上面) を基準にすると
         // 上へ大きく弾き出されてしまうので、機体の中心からこの点へ向かう線が地面を横切る所を探し、
         // そこの面 (= 壁) を基準にする
@@ -164,16 +166,16 @@ export class GroundContact {
         for (let k = 0; k < 10; k++) {
           const mid = (lo + hi) / 2;
           _np.copy(body.pos).addScaledVector(_rw, mid);
-          if (_np.length() < planet.groundRadiusAt(_np)) hi = mid;
+          if (frame.heightAbove(_np) < 0) hi = mid;
           else lo = mid;
         }
         _np.copy(body.pos).addScaledVector(_rw, hi);
-        groundNormal(planet, _np, planet.groundRadiusAt(_np), _n);
+        groundNormal(frame, _np, frame.heightAbove(_np), _n);
         depth = _r.copy(_p0).sub(_pw).dot(_n); // _p0: 横切った所の真下の地面の点
       } else {
         // 地面を、この点の真下の接平面で近似する。めり込みはその平面までの距離
-        groundNormal(planet, _pw, gp, _n);
-        depth = (gp - rp) * _n.dot(_upP);
+        groundNormal(frame, _pw, hp, _n);
+        depth = -hp * _n.dot(_upP);
       }
       if (depth <= 0) { this.prev[i] = false; continue; }
       depth = Math.min(depth, MAX_DEPTH);
@@ -239,39 +241,36 @@ export class GroundContact {
     // 真上ではなく地面の法線の向きに押し出す (崖の壁にめり込んだら、崖の上ではなく壁の外へ出す)
     if (alt < MIN_CLEARANCE) {
       _n.copy(this.normal);
-      let g = g0;
+      let h = alt; // 機体の中心の、地面からの高さ
       const prev = body.prevPos;
-      if (-alt > DEEP && prev.distanceToSquared(body.pos) < 400 * 400 &&
-          prev.length() > planet.groundRadiusAt(prev)) {
+      if (-alt > DEEP && prev.distanceToSquared(body.pos) < 400 * 400 && frame.heightAbove(prev) > 0) {
         // 1ステップで壁の奥まで入った。前のステップの位置からの経路が地面を横切る所を探し、
         // そこから壁の外へ出す (真下の地面を基準にすると崖の上へ持ち上がってしまう)
         let lo = 0, hi = 1;
         for (let k = 0; k < 12; k++) {
           const mid = (lo + hi) / 2;
           _np.copy(prev).lerp(body.pos, mid);
-          if (_np.length() < planet.groundRadiusAt(_np)) hi = mid;
+          if (frame.heightAbove(_np) < 0) hi = mid;
           else lo = mid;
         }
         _np.copy(prev).lerp(body.pos, hi);
-        groundNormal(planet, _np, planet.groundRadiusAt(_np), _n);
+        groundNormal(frame, _np, frame.heightAbove(_np), _n);
         body.pos.copy(prev).lerp(body.pos, lo).addScaledVector(_n, MIN_CLEARANCE);
-        g = planet.groundRadiusAt(body.pos);
+        h = frame.heightAbove(body.pos);
       }
       _nv.copy(_n); // 速度を消す向き: 最初に押し出した面の法線
       for (let k = 0; k < 4; k++) {
-        const rr = body.pos.length();
-        _upP.copy(body.pos).divideScalar(rr);
-        const need = (g + MIN_CLEARANCE - rr) * _n.dot(_upP); // 接平面から MIN_CLEARANCE 離すのに要る距離
+        frame.upAt(body.pos, _upP);
+        const need = (MIN_CLEARANCE - h) * _n.dot(_upP); // 接平面から MIN_CLEARANCE 離すのに要る距離
         if (need <= 1e-3) break;
         body.pos.addScaledVector(_n, need + 1e-3);
-        g = planet.groundRadiusAt(body.pos);
-        groundNormal(planet, body.pos, g, _n);
+        h = frame.heightAbove(body.pos);
+        groundNormal(frame, body.pos, h, _n);
       }
       // まだ地面の下なら (ありえない形の地面)、真上へ戻す
-      const rr = body.pos.length();
-      if (rr < g + MIN_CLEARANCE * 0.5) {
-        body.pos.multiplyScalar((g + MIN_CLEARANCE) / rr);
-        _nv.copy(body.pos).normalize();
+      if (h < MIN_CLEARANCE * 0.5) {
+        frame.upAt(body.pos, _nv);
+        body.pos.addScaledVector(_nv, MIN_CLEARANCE - h);
       }
       const vn = body.vel.dot(_nv);
       if (vn < 0) {

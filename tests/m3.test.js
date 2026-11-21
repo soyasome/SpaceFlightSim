@@ -120,7 +120,16 @@ test('ホバー: 大気中でも空中で静止できる', () => {
 // --- 着陸 ---
 
 const R = 400e3;
-const FLAT = { groundRadiusAt: () => R };
+
+/** groundRadiusAt だけを決めた球の天体に、接地の処理が使う座標系の窓口 (upAt, heightAbove) を足す。 */
+function sphere(body) {
+  return Object.assign(body, {
+    upAt: (p, out) => out.copy(p).divideScalar(p.length()),
+    heightAbove(p) { return p.length() - this.groundRadiusAt(p); },
+  });
+}
+
+const FLAT = sphere({ groundRadiusAt: () => R });
 
 /** 平らな惑星の上で、エンジンを使わずに seconds 秒進める。受けた損傷の合計を返す。 */
 function ground(ship, seconds, brake, planet = FLAT, onStep = null) {
@@ -141,12 +150,12 @@ function ground(ship, seconds, brake, planet = FLAT, onStep = null) {
 
 /** z = zWall より先 (-Z 側) に、高さ wall (m) の崖がそびえる惑星。崖の水平方向の幅は width (m)。 */
 function cliffPlanet(zWall, wall, width) {
-  return {
+  return sphere({
     groundRadiusAt(p) {
       const t = Math.min(1, Math.max(0, (zWall - p.z) / width));
       return R + wall * t * t * (3 - 2 * t);
     },
-  };
+  });
 }
 
 function parked(height) {

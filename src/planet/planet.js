@@ -167,7 +167,7 @@ export class Planet {
   }
 
   /** 惑星中心から距離 r での重力加速度の大きさ (m/s²)。 */
-  gravityAt(r) {
+  gravityAtRadius(r) {
     const k = this.radius / Math.max(r, this.radius);
     return this.gravity * k * k;
   }
@@ -177,6 +177,65 @@ export class Planet {
     const a = this.atmosphere;
     if (!a || altitude > a.height) return 0;
     return Math.exp(-Math.max(0, altitude) / a.scaleHeightR);
+  }
+
+  // ---------------------------------------------------------------- 座標系の窓口
+  // 機体が属する座標系 (game.frame) に求めるもの。接地 (ground.js)・飛行 (game.js)・敵 (combat.js) は
+  // これだけを使い、「下 = 惑星の中心の方」を自分では仮定しない。
+  // 円筒の居住地など、下の向きが違う座標系も同じ名前で持つ。引数の点はすべてこの座標系のローカル座標。
+
+  /** 世界座標の点 world が、この座標系に入る範囲にあるか。 */
+  entersAt(world) {
+    return world.distanceTo(this.pos) < this.frameEnter;
+  }
+
+  /** ローカル座標の点 p が、まだこの座標系の中にあるか (出たら宇宙に戻す)。 */
+  containsLocal(p) {
+    return p.length() <= this.frameExit;
+  }
+
+  /** 世界座標の点 world から表面 (海面) までの距離。いちばん近い天体を選ぶのに使う。 */
+  surfaceDistance(world) {
+    return world.distanceTo(this.pos) - this.radius;
+  }
+
+  /** 点 p での真上の向き (単位ベクトル) を out に入れる。 */
+  upAt(p, out) {
+    return out.copy(p).divideScalar(p.length());
+  }
+
+  /** 点 p の、真下の地面 (水面・ビルの屋上を含む) からの高さ (m)。負なら地面の下。 */
+  heightAbove(p) {
+    return p.length() - this.groundRadiusAt(p);
+  }
+
+  /** heightAbove の軽い版 (細かい凹凸とビルを省く)。敵の操縦など、呼ぶ回数が多い所で使う。 */
+  roughHeightAbove(p) {
+    const r = p.length();
+    const h = this.terrain.height(p.x / r, p.y / r, p.z / r, 20);
+    return r - this.radius - Math.max(0, h);
+  }
+
+  /** 点 p の、基準面 (海面) からの高さ (m)。 */
+  seaLevelAt(p) {
+    return p.length() - this.radius;
+  }
+
+  /** 点 p での重力加速度 (ベクトル, m/s²) を out に入れる。 */
+  gravityAt(p, out) {
+    const r = p.length();
+    return out.copy(p).multiplyScalar(-this.gravityAtRadius(r) / r);
+  }
+
+  /** 点 p での空気の密度 (kg/m³)。 */
+  airDensityAt(p) {
+    return this.densityAt(p.length() - this.radius) * this.surfaceDensity;
+  }
+
+  /** 方向 dir (単位ベクトルでなくてよい) の真上、地面から alt (m) の点を out に入れる。 */
+  surfacePoint(dir, alt, out) {
+    out.copy(dir).normalize();
+    return out.multiplyScalar(this.groundRadiusAt(out) + alt);
   }
 
   /**

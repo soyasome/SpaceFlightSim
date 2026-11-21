@@ -62,17 +62,24 @@ O'Neill の Island Three と同じ大きさにする。惑星はゲームの都�
 円筒では下は軸から外向きなので、`game.frame` が持つ窓口を次のように一般化する。
 **作業の大部分はここ**で、回転させるかどうかに関係なく必要になる。
 
+段階0 で惑星に実装した窓口 ([planet.js](../src/planet/planet.js) の「座標系の窓口」)。円筒も同じ名前で持つ。
+
 | メソッド | 惑星 | 円筒の内側 |
 |---|---|---|
-| `contains(p)` / `shouldExit(p)` | 中心からの距離と `frameEnter` / `frameExit` を比べる | 円筒の中か (入港口の筒を含む) |
+| `entersAt(world)` | 中心からの距離 < `frameEnter` | 円筒の中か (入港口の筒を含む) |
+| `containsLocal(p)` | 中心からの距離 ≦ `frameExit` | 同上 (ローカル座標で) |
+| `surfaceDistance(world)` | 中心からの距離 − 半径 | 外壁までの距離 |
 | `upAt(p, out)` | p / \|p\| | −(x, 0, z) / r |
 | `heightAbove(p)` | \|p\| − `groundRadiusAt(p)` | (R − h(θ, y)) − r |
-| `groundPointAt(p, out)` | 真下の地面の点 | 軸から外へ伸ばした線と地面の交点 |
+| `roughHeightAbove(p)` | 細部とビルを省いた高さ (敵の操縦用) | `heightAbove` と同じでよい |
+| `seaLevelAt(p)` | \|p\| − 半径 | R − r |
 | `gravityAt(p, out)` | 中心へ g(r) | 軸から外へ g · r / R |
-| `densityAt(p)` | 高度で決まる | ρ(r) |
-| `seaLevelAt(p)` | \|p\| − radius | (表示用) 軸からの距離 |
+| `airDensityAt(p)` | 高度で決まる (kg/m³) | ρ(r) |
+| `surfacePoint(dir, alt, out)` | 方向 dir の地面から alt 上の点 | 位置 dir の真下の地面から alt 上の点 |
 
-**直すところ**:
+真下の地面の点は、窓口から `p − upAt(p) × heightAbove(p)` で求める (ground.js の `dropToGround`)。
+
+**直したところ** (段階0 で済み):
 - [ground.js](../src/flight/ground.js)
   - `groundNormal` は、真下の点のまわりを `upAt` に直交する2方向に調べる
   - 崖の二分探索は `heightAbove < 0` で判定する
@@ -82,7 +89,7 @@ O'Neill の Island Three と同じ大きさにする。惑星はゲームの都�
   - `envAt` は `gravityAt` と `densityAt` を呼ぶだけにする
 - [combat.js](../src/combat/combat.js): `altitudeAt`、`upAt`、`solidHit` を窓口経由にする
 
-**最初の段階では惑星だけをこの窓口に移し、動きを変えないこと** (テストが全部そのまま通ること) を確かめてから、円筒を足す。
+段階0 では惑星だけをこの窓口に移し、動きが変わらないこと (今までのテストが全部通ること) を確かめた。
 
 ## 5. 中の地形と描画
 
@@ -144,7 +151,7 @@ O'Neill の Island Three と同じ大きさにする。惑星はゲームの都�
 
 | 段階 | 内容 | 終わったと言える状態 |
 |---|---|---|
-| 0 | 座標系の窓口を作り、惑星をそれに移す | 動きが変わらず、今のテストが全部通る |
+| 0 (済み) | 座標系の窓口を作り、惑星をそれに移す | 動きが変わらず、今のテストが全部通る |
 | 1 | 星系に置き、外観を描き (回して見せる)、星図とナビに載せる。外壁の当たり判定 | SOL の L5 で、回る2本の円筒が見える。外壁にぶつかると跳ね返る |
 | 2 | 入港口から中に入る。円筒の座標系、軸から外向きの重力、平らな地面 (h = 0) への着陸、簡単な光と霧 | 中で着陸でき、軸の近くでは浮く |
 | 3 | 中の地形 (LOD)、木と家、蓋の段々畑、鏡による昼と夜、夜の明かり | 中を飛ぶと、丘・湖・町と、頭上の陸の帯が見える |

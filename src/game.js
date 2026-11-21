@@ -301,7 +301,7 @@ export class Game {
     // 静止摩擦: ほぼ止まっている機体は、斜面 (約35°まで) でも滑り出さない
     if (ground.gearContacts === 3 && ground.hullContacts === 0 && brake &&
         body.vel.lengthSq() < 0.09 && body.angVel.lengthSq() < 0.0025 &&
-        ground.normal.dot(body.pos) > 0.82 * body.pos.length()) {
+        ground.normal.dot(this.frame.upAt(body.pos, this._v)) > 0.82) {
       const n = ground.normal;
       const vn = body.vel.dot(n);
       const slip = this._v.copy(body.vel).addScaledVector(n, -vn); // 地面に沿った速度
@@ -326,12 +326,10 @@ export class Game {
    * 位置 pos (フレーム座標) での重力と空気を env に入れる。自機にも敵機にも使う。
    */
   envAt(pos, env) {
-    const planet = this.frame;
-    if (planet) {
-      const r = pos.length();
-      env.gravity.copy(pos).multiplyScalar(-planet.gravityAt(r) / r);
-      const ratio = planet.densityAt(r - planet.radius);
-      env.rho = ratio * planet.surfaceDensity;
+    const frame = this.frame;
+    if (frame) {
+      frame.gravityAt(pos, env.gravity);
+      env.rho = frame.airDensityAt(pos);
       // 高度 約32km から 18km にかけて、航空機としての操縦に切り替わる
       // (それより上は空気が薄すぎて、翼では機体を支えられない)
       env.aero = smoothstep(0.01, 0.08, env.rho / 1.225);
@@ -361,30 +359,30 @@ export class Game {
     this.landed = this.ground.gearContacts === 3 && body.vel.lengthSq() < 1;
 
     if (this.frame) {
-      const planet = this.frame;
-      const r = body.pos.length();
-      this.nearPlanet = planet;
-      if (r > planet.frameExit) {
+      const frame = this.frame;
+      this.nearPlanet = frame;
+      if (!frame.containsLocal(body.pos)) {
+        const sea = frame.seaLevelAt(body.pos);
         this.setFrame(null);
-        this.altitude = this.altitudeSea = this.cruiseDist = r - planet.radius;
+        this.altitude = this.altitudeSea = this.cruiseDist = sea;
         this.verticalSpeed = 0;
         return;
       }
-      this.altitude = r - planet.groundRadiusAt(body.pos);
-      this.altitudeSea = r - planet.radius;
+      this.altitude = frame.heightAbove(body.pos);
+      this.altitudeSea = frame.seaLevelAt(body.pos);
       this.cruiseDist = this.altitude;
-      this.verticalSpeed = body.vel.dot(body.pos) / r;
+      this.verticalSpeed = body.vel.dot(frame.upAt(body.pos, this._v));
     } else {
       this.verticalSpeed = 0;
       let nearest = Infinity;
       let enter = null;
       for (const planet of this.planets) {
-        const d = body.pos.distanceTo(planet.pos);
-        if (d - planet.radius < nearest) {
-          nearest = d - planet.radius;
+        const d = planet.surfaceDistance(body.pos);
+        if (d < nearest) {
+          nearest = d;
           this.nearPlanet = planet;
         }
-        if (d < planet.frameEnter) enter = planet;
+        if (planet.entersAt(body.pos)) enter = planet;
       }
       this.altitude = this.altitudeSea = nearest;
       // 巡航の速さは、惑星だけでなく恒星の表面までの距離でも抑える
@@ -715,7 +713,7 @@ export class Game {
     if (this.frame) {
       // ガス巨星では、気圧でつぶされない高さまで戻す
       const alt = this.frame.gas ? this.frame.atmosphere.height + 60e3 : RESPAWN_ALTITUDE;
-      this.placeShip(this.frame, ship.body.pos.clone().normalize(), alt);
+      this.placeShip(this.frame, this.frame.upAt(ship.body.pos, new THREE.Vector3()), alt);
     } else {
       this.input.throttle = 0; // 宇宙ではその場で復帰する
       // 恒星のそばで失ったときは、安全な距離まで離す
@@ -732,7 +730,7 @@ export class Game {
 
   /**
    * 機体を惑星の上空に、北向き・水平で置く。
-   * @param up 惑星ローカル座標での真上方向
+   * @param up 惑星ローカル座標での方向 (この方向の地面の上に置く)
    * @param alt 地面からの高さ (m)
    * @param pitch 機首の上下 (度, 0 = 水平)
    * @param speed 前進速度 (m/s)。0 ならホバーで静止、0 より大きければ飛行状態にする
@@ -741,8 +739,8 @@ export class Game {
     this.setFrame(planet);
     const ship = this.ship;
     const b = ship.body;
-    up = up.clone().normalize();
-    b.pos.copy(up).multiplyScalar(planet.groundRadiusAt(up) + alt);
+    planet.surfacePoint(up, alt, b.pos);
+    up = planet.upAt(b.pos, new THREE.Vector3());
     b.angVel.set(0, 0, 0);
     const north = new THREE.Vector3(0, 1, 0).addScaledVector(up, -up.y).normalize();
     const right = new THREE.Vector3().crossVectors(north, up);
@@ -807,13 +805,13 @@ export class Game {
     // 真上へ持ち上げると崖の壁の中から崖の上へ飛び出すので、機体の方へ引き寄せる
     const cam = this.rig.pos;
     if (this.frame) {
-      const planet = this.frame;
-      const below = (p) => p.length() < planet.groundRadiusAt(p) + CAMERA_CLEARANCE;
+      const frame = this.frame;
+      const below = (p) => frame.heightAbove(p) < CAMERA_CLEARANCE;
       if (below(cam)) {
         const ship = this._sPos;
         if (below(ship)) {
-          const r = cam.length();
-          cam.multiplyScalar((planet.groundRadiusAt(cam) + CAMERA_CLEARANCE) / r);
+          const h = frame.heightAbove(cam);
+          cam.addScaledVector(frame.upAt(cam, this._v), CAMERA_CLEARANCE - h);
         } else {
           // 機体 (t = 0) とカメラ (t = 1) を結ぶ線上で、地面より上にある最も遠い点を二分探索する
           const p = this._camProbe || (this._camProbe = new THREE.Vector3());
@@ -996,7 +994,7 @@ export class Game {
    */
   _ladder(cam) {
     const lines = [];
-    const up = cam.clone().normalize();
+    const up = this.frame.upAt(cam, new THREE.Vector3());
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.rig.quat);
     const head = fwd.addScaledVector(up, -fwd.dot(up));
     if (head.lengthSq() < 0.01) return lines; // 真上・真下を向いているときは描かない
@@ -1096,7 +1094,7 @@ export class Game {
     const nearPlanet = !!this.frame && this.altitudeSea < 150e3;
     if (nearPlanet) {
       ladder = this._ladder(cam);
-      const up = body.pos.clone().normalize();
+      const up = this.frame.upAt(body.pos, new THREE.Vector3());
       const f = new THREE.Vector3(0, 0, -1).applyQuaternion(body.quat);
       f.addScaledVector(up, -f.dot(up));
       const north = new THREE.Vector3(0, 1, 0).addScaledVector(up, -up.y);
