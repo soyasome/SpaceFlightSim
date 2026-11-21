@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   HABITAT, interiorHeight, interiorGravity, interiorAir, inPort, inInterior, capContact, hullContact,
+  MIRROR, trussParts, exteriorContact,
 } from '../universe/habitat.js';
 import { makeInteriorTerrain } from '../universe/habitatTerrain.js';
 import { InteriorTerrain, InteriorProps, INTERIOR_LIGHT_GLSL } from './habitatInterior.js';
@@ -21,7 +22,7 @@ export const DAY_LENGTH = 24 * 60;
 // 窓の外には鏡が開いている。鏡は影の側の端に蝶番があり、恒星の方へ花びらのように開いて、
 // 恒星の光を窓の中へ跳ね返す。
 
-const MIRROR_ANGLE = (30 * Math.PI) / 180; // 鏡の開き (外壁からの角度)
+const MIRROR_ANGLE = MIRROR.angle; // 鏡の開き (外壁からの角度)。寸法は universe/habitat.js の MIRROR
 
 // 中の面の共通の頂点シェーダー。vLocal: 円筒ローカル座標、vRel: カメラからの相対位置
 const INTERIOR_VERT = /* glsl */ `
@@ -86,6 +87,7 @@ const GLASS_FRAG = /* glsl */ `
   }`;
 const _p = new THREE.Vector3();
 const _qm = new THREE.Quaternion();
+const _sp = new THREE.Vector3();
 const _X = new THREE.Vector3(1, 0, 0);
 
 // 金属らしさは控えめにする (環境マップがないので、金属の度合いが高いと何も映らず黒くなる)
@@ -217,13 +219,13 @@ export class HabitatView {
     // --- 鏡: 窓の帯の外。影の側の端 (y = -H) に蝶番があり、恒星の方へ開く ---
     for (let k = 0; k < 3; k++) {
       const a = k * (2 * Math.PI / 3) + seg; // 窓の帯の中心
-      const width = 2 * R * Math.sin(seg / 2) * 1.05;
+      const width = 2 * R * Math.sin(seg / 2) * MIRROR.widthK;
       const geo = new THREE.PlaneGeometry(width, L);
       geo.translate(0, L / 2, 0); // 蝶番 (下の辺) を原点に
       const m = this._mesh(geo, mirrorMat);
       // 外壁に沿って立て (面の法線を外向き)、外へ MIRROR_ANGLE 倒す
       const out = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
-      m.position.set(out.x * (R + 60), -H, out.z * (R + 60));
+      m.position.set(out.x * (R + MIRROR.offset), -H, out.z * (R + MIRROR.offset));
       m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), out);
       this.mirrors.push({ mesh: m, base: m.quaternion.clone() }); // 開きは updateDay で決める (上 = 恒星側の端を外へ倒す)
     }
@@ -249,29 +251,16 @@ export class HabitatView {
       }
     }
 
-    // --- 2本をつなぐ骨組み (組の1本目だけ。もう1本はローカル X の +gap にある) ---
-    if (this.def.spin > 0) {
-      const gap = this.def.pair.gap;
+    // --- 2本をつなぐ骨組み (組の1本目だけ。寸法は universe/habitat.js の trussParts) ---
+    const parts = trussParts(this.def);
+    if (parts.length) {
       const trussMat = this._mat(metal(0x6f747b, 0.65));
-      // 恒星側: 蓋の外の軸受けから骨組みへ
-      const yy = H + 2600;
-      const beam = new THREE.BoxGeometry(gap, 260, 260);
-      beam.translate(gap / 2, yy, 0);
-      this._mesh(beam, trussMat, this.group);
-      for (const x of [0, gap]) {
-        const shaft = new THREE.CylinderGeometry(160, 160, yy - H, 16);
-        shaft.translate(x, H + (yy - H) / 2, 0);
-        this._mesh(shaft, trussMat, this.group);
-      }
-      // 影の側: 入港口をふさがないよう、筒の脇を通す
-      const z = PR + 400;
-      const back = new THREE.BoxGeometry(gap, 260, 260);
-      back.translate(gap / 2, -H - 1000, z);
-      this._mesh(back, trussMat, this.group);
-      for (const x of [0, gap]) {
-        const strut = new THREE.BoxGeometry(200, 260, z - PR - 100);
-        strut.translate(x, -H - 1000, (z + PR + 100) / 2);
-        this._mesh(strut, trussMat, this.group);
+      for (const p of parts) {
+        const geo = p.round
+          ? new THREE.CylinderGeometry(p.size[0] / 2, p.size[0] / 2, p.size[1], 16)
+          : new THREE.BoxGeometry(...p.size);
+        geo.translate(...p.center);
+        this._mesh(geo, trussMat, this.group);
       }
     }
   }
@@ -419,6 +408,21 @@ export class HabitatView {
     const y = Math.min(H, Math.max(-H, p.y));
     const g = this.def.radius - this.terrain.ground(Math.atan2(x, z), y) - alt;
     return out.set(x * g, y, z * g);
+  }
+
+  /** 宇宙港のパッドの中心 (円筒ローカル座標)。 */
+  get spaceport() {
+    return _sp.set(...this.terrain.spaceport);
+  }
+
+  /**
+   * 外にいるときの当たり判定 (外壁・鏡・骨組み・入港口の筒)。鏡は今の回転と開きの位置で調べる。
+   * @param local 円筒ローカル座標の点
+   * @returns { depth, normal: [x,y,z] (円筒ローカル座標), what } | null
+   */
+  exteriorContact(local) {
+    const open = MIRROR_ANGLE * (0.04 + 0.96 * this.day);
+    return exteriorContact(this.def, this.angle, open, local.x, local.y, local.z);
   }
 
   /** 両端の蓋との当たり (機体の中心を蓋から margin 離す)。 */

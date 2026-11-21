@@ -302,7 +302,8 @@ export class Hud {
       ctx.fillText(`ALT ${formatDistance(Math.max(0, s.altitude))}`, w * 0.5, h - 46);
       ctx.font = '12px Consolas, "Courier New", monospace';
       ctx.fillStyle = DIM;
-      ctx.fillText(`${s.frameName}   SEA LEVEL ${formatDistance(Math.max(0, s.altitudeSea))}`, w * 0.5, h - 26);
+      const detail = s.frameDetail || `SEA LEVEL ${formatDistance(Math.max(0, s.altitudeSea))}`;
+      ctx.fillText(`${s.frameName}   ${detail}`, w * 0.5, h - 26);
     } else {
       ctx.fillText(`${s.systemName} 星系   恒星まで ${formatDistance(s.starDist)}`, w * 0.5, h - 26);
     }

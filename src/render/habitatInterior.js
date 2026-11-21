@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { stripTheta } from '../universe/habitatTerrain.js';
+import { stripTheta, SPACEPORT } from '../universe/habitatTerrain.js';
 import { mulberry32 } from '../math/random.js';
 
 // オニール・シリンダーの中の地形と、木と家。座標は円筒ローカル座標 (Y = 軸)。
@@ -79,6 +79,7 @@ const TERRAIN_FRAG = /* glsl */ `
   #include <logdepthbuf_pars_fragment>
   ${INTERIOR_LIGHT_GLSL}
   uniform mat3 uRot; // 円筒ローカル → 描画座標の向き (視線の向きをローカルに戻すのに使う)
+  uniform vec4 uPad; // 宇宙港のパッドの中心 (円筒ローカル座標) と半径。パッドは θ = 0 にあり、周方向は +X
   varying vec3 vLocal;
   varying vec3 vRel;
   varying vec3 vNormal;
@@ -95,8 +96,24 @@ const TERRAIN_FRAG = /* glsl */ `
     // 近くでは畑の畝の細かい縞
     float fine = (h21(floor(vLocal.xz * 0.25) + floor(vLocal.y * 0.25)) - 0.5) * 0.12 * (1.0 - smoothstep(300.0, 1500.0, d));
     albedo *= 1.0 + fine * (1.0 - water);
+    // 宇宙港のパッドの印 (外周と内側の円、十字) と、外周の誘導灯
+    vec3 glow = vec3(0.0);
+    vec3 dp = vLocal - uPad.xyz;
+    float pd = length(dp);
+    if (pd < uPad.w + 40.0) {
+      float w = fwidth(pd) * 1.5;
+      float ring = 1.0 - smoothstep(2.0, 3.5 + w, abs(pd - (uPad.w - 14.0)));
+      float ring2 = 1.0 - smoothstep(1.5, 3.0 + w, abs(pd - uPad.w * 0.45));
+      float crossA = (1.0 - smoothstep(2.0, 3.5 + w, abs(dp.x))) * step(abs(dp.y), uPad.w * 0.3);
+      float crossB = (1.0 - smoothstep(2.0, 3.5 + w, abs(dp.y))) * step(abs(dp.x), uPad.w * 0.3);
+      float mark = max(max(ring, ring2), max(crossA, crossB)) * step(pd, uPad.w);
+      albedo = mix(albedo, vec3(0.85, 0.8, 0.3), mark);
+      float seg = atan(dp.x, dp.y) * (uPad.w + 6.0) / 24.0; // 24 m ごと
+      float lamp = 1.0 - smoothstep(1.2, 2.6, length(vec2((fract(seg) - 0.5) * 24.0, pd - uPad.w - 6.0)));
+      glow = vec3(0.35, 0.8, 1.0) * lamp * (0.4 + 1.2 * nightK());
+    }
     float ndl = max(dot(N, L), 0.0);
-    vec3 col = albedo * (sunColor() * ndl + skyAmbient());
+    vec3 col = albedo * (sunColor() * ndl + skyAmbient()) + glow;
     // 水面: 光の照り返し
     if (water > 0.5) {
       vec3 V = normalize(-(transpose(uRot) * vRel)); // 円筒ローカル座標での、地面から目への向き
@@ -238,7 +255,11 @@ export class InteriorTerrain {
     this.terrain = terrain;
     this.parent = parent;
     this.material = new THREE.ShaderMaterial({
-      uniforms: { ...uniforms, uRot: { value: new THREE.Matrix3() } },
+      uniforms: {
+        ...uniforms,
+        uRot: { value: new THREE.Matrix3() },
+        uPad: { value: new THREE.Vector4(...terrain.spaceport, SPACEPORT.radius) },
+      },
       side: THREE.DoubleSide, // 中からしか見えないので、三角形の向きは気にしない
       vertexShader: TERRAIN_VERT,
       fragmentShader: TERRAIN_FRAG,
@@ -273,8 +294,8 @@ export class InteriorTerrain {
   update(camLocal) {
     for (const c of this.chunks) c.want = this._segFor(c, camLocal);
     if (!this.ready) {
-      // 最初は全部を粗く作る (穴が開かないように)。近い所はこの後で細かくする
-      for (const c of this.chunks) this._build(c, Math.min(c.want, 8));
+      // 最初は全部をいちばん粗く作る (穴が開かないように)。近い所はこの後で少しずつ細かくする
+      for (const c of this.chunks) this._build(c, 4);
       this.ready = true;
       return;
     }

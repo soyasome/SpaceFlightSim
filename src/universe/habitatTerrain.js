@@ -22,6 +22,11 @@ const STRIP = (2 * Math.PI) / 3; // 陸の帯の間隔 (rad)
 export const TOWN_CELL = 1500; // 町の区画の大きさ (m)
 export const CAP_MOUNTAIN = 1100; // 蓋の前の段々畑の山の高さ (m)
 const TERRACE = 110; // 段々畑の1段の高さ (m)
+/**
+ * 宇宙港: 陸の帯 0 の中央、影の側 (入港口のある側) の蓋から fromEnd (m) の所にある、平らな円形の着陸パッド。
+ * radius: パッドの半径、apron: まわりのなだらかな造成の幅、height: 標高 (m)
+ */
+export const SPACEPORT = { fromEnd: 4200, radius: 320, apron: 180, height: 8 };
 
 const sat = (x) => Math.min(1, Math.max(0, x));
 const smooth = (a, b, x) => {
@@ -101,7 +106,7 @@ export function makeInteriorTerrain(def) {
    */
   function sample(theta, y) {
     const { k, a } = stripAt(theta);
-    const out = { land: false, a, k, s: 0, h: 0, town: 0, river: 0, mountain: 0, forest: 0 };
+    const out = { land: false, a, k, s: 0, h: 0, town: 0, river: 0, mountain: 0, forest: 0, pad: 0 };
     if (Math.abs(a) > 1 || Math.abs(y) > H) return out; // 窓 (または蓋の外)
     out.land = true;
     // 帯の中の周方向の位置 (m, 帯の中心が 0)。θ の測り方 (負か 0〜2π か) によらず同じ値になる
@@ -130,6 +135,16 @@ export function makeInteriorTerrain(def) {
     const ridge = smooth(0.95, 0.45, Math.abs(a));
     out.mountain = end * ridge;
     if (out.mountain > 0) h = Math.max(h, terrace(out.mountain * CAP_MOUNTAIN) + 4);
+    // 宇宙港: パッドのまわりを平らに造成する (町・森・川より優先)
+    if (k === 0) {
+      const d = Math.hypot(s, y - (-H + SPACEPORT.fromEnd));
+      const flat = 1 - smooth(SPACEPORT.radius, SPACEPORT.radius + SPACEPORT.apron, d);
+      if (flat > 0) {
+        h = lerp(h, SPACEPORT.height, flat);
+        out.town *= 1 - flat;
+        out.pad = 1 - smooth(SPACEPORT.radius - 4, SPACEPORT.radius, d);
+      }
+    }
     // 窓との境: 帯の縁で標高を 0 に落とし、少し盛り上げて土手にする
     const edge = smooth(1.0, 0.9, Math.abs(a));
     h = h * edge + 5 * smooth(0.86, 0.95, Math.abs(a)) * smooth(1.0, 0.97, Math.abs(a));
@@ -137,6 +152,8 @@ export function makeInteriorTerrain(def) {
     // 森: 丘の上の、町でも川でもない所
     const f = fbm(px / 900 + 21.7, y / 900 - 4.4, pz / 900, 3);
     out.forest = smooth(0.05, 0.3, f) * (1 - out.town) * smooth(6, 14, h) * (1 - smooth(0.2, 0.6, out.mountain));
+    if (k === 0) out.forest *= smooth(SPACEPORT.radius + SPACEPORT.apron, SPACEPORT.radius + SPACEPORT.apron + 100,
+      Math.hypot(s, y - (-H + SPACEPORT.fromEnd))); // 宇宙港のまわりには木を生やさない
     return out;
   }
 
@@ -181,10 +198,15 @@ export function makeInteriorTerrain(def) {
     r = lerp(r, 0.36, steep); g = lerp(g, 0.3, steep); b = lerp(b, 0.24, steep);
     // 町: 舗装と屋根
     r = lerp(r, 0.38, s.town); g = lerp(g, 0.37, s.town); b = lerp(b, 0.35, s.town);
+    // 宇宙港のパッド: コンクリート (印と誘導灯はシェーダーが描く)
+    r = lerp(r, 0.46, s.pad); g = lerp(g, 0.46, s.pad); b = lerp(b, 0.45, s.pad);
     out[0] = r; out[1] = g; out[2] = b;
     out[3] = s.town > 0.5 ? 0.5 : 0;
     return out;
   }
 
-  return { radius: R, length: def.length, seed: def.seed, sample, ground, color, riverA, townAt };
+  /** 宇宙港のパッドの中心 (円筒ローカル座標) [x, y, z]。陸の帯 0 の中心 (θ = 0) にある */
+  const spaceport = [0, -H + SPACEPORT.fromEnd, R - SPACEPORT.height];
+
+  return { radius: R, length: def.length, seed: def.seed, sample, ground, color, riverA, townAt, spaceport };
 }

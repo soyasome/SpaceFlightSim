@@ -567,25 +567,28 @@ export class Game {
         }
       }
     }
-    // オニール・シリンダーの外壁にぶつかる (物理の上では外壁は止まっている)
-    const hh = this.habitatHit;
-    if (hh && hh.contact.inside && !this.frame && !this.destroyed) {
-      const h = hh.habitat, c = hh.contact;
-      const n = this._v2.set(...c.normal).applyQuaternion(h.quat); // 押し出す向き (世界座標)
-      body.pos.addScaledVector(n, c.depth + 2);
-      body.prevPos.copy(body.pos);
-      const vn = body.vel.dot(n);
-      if (vn < 0) {
-        const impact = -vn;
-        body.vel.addScaledVector(n, -vn * 1.3); // 跳ね返る
-        if (ship.driving) ship.stopCruise();
-        if (impact > 15) {
-          ship.hull -= Math.min(120, impact * 0.6);
-          this.onPlayerHit(impact * 0.2, true);
-          this.notify(`${h.name} の外壁に衝突した`, 1.5);
+    // オニール・シリンダーの外壁・鏡・骨組み・入港口の筒にぶつかる (物理の上ではどれも止まっているものとして扱う)
+    if (!this.frame && !this.destroyed) {
+      for (const hab of this.habitats) {
+        const local = hab.toLocal(body.pos, this._v);
+        if (local.lengthSq() > 40e3 * 40e3) continue; // 遠い
+        const c = hab.exteriorContact(local);
+        if (!c) continue;
+        const n = this._v2.set(...c.normal).applyQuaternion(hab.quat); // 押し出す向き (世界座標)
+        body.pos.addScaledVector(n, c.depth);
+        body.prevPos.copy(body.pos);
+        const vn = body.vel.dot(n);
+        if (vn < 0) {
+          const impact = -vn;
+          body.vel.addScaledVector(n, -vn * 1.3); // 跳ね返る
+          if (ship.driving) ship.stopCruise();
+          if (impact > 15) {
+            ship.hull -= Math.min(120, impact * 0.6);
+            this.onPlayerHit(impact * 0.2, true);
+            this.notify(`${hab.name} の${c.what}に衝突した`, 1.5);
+          }
         }
       }
-      this.habitatHit = { habitat: h, contact: hullContact(h.def, ...h.toLocal(body.pos, this._v).toArray()) };
     }
     // ガス巨星の深い所では気圧でつぶされる
     if (!this.destroyed && this.frame && this.frame.gas && this.altitudeSea < 40e3) {
@@ -661,7 +664,7 @@ export class Game {
     if (nav.type === 'planet') return nav.planet.name;
     if (nav.type === 'star') return `${nav.star.name} 星系`;
     if (nav.type === 'swarm') return 'ダイソン・スウォーム';
-    if (nav.type === 'habitat') return nav.habitat.name;
+    if (nav.type === 'habitat') return nav.habitat === this.frame ? `${nav.habitat.name} 宇宙港` : nav.habitat.name;
     return '小惑星帯';
   }
 
@@ -758,6 +761,8 @@ export class Game {
     if (planet && planet.freeze) {
       planet.freeze();
       this.ship.stopCruise();
+      // 行き先がなければ (またはこの居住地なら)、宇宙港へ案内する
+      if (!this.nav || this.nav.type === 'habitat') this.nav = { type: 'habitat', habitat: planet };
       this.notify(`${planet.name} に入港した — 中は安全地帯`, 3);
     }
   }
@@ -794,7 +799,8 @@ export class Game {
     if (this.frame) {
       // ガス巨星では、気圧でつぶされない高さまで戻す
       const alt = this.frame.gas ? this.frame.atmosphere.height + 60e3 : RESPAWN_ALTITUDE;
-      this.placeShip(this.frame, ship.body.pos.clone(), alt);
+      // 居住地の中では宇宙港の上空に戻す
+      this.placeShip(this.frame, this.frame.spaceport ? this.frame.spaceport.clone() : ship.body.pos.clone(), alt);
     } else {
       this.input.throttle = 0; // 宇宙ではその場で復帰する
       // 恒星のそばで失ったときは、安全な距離まで離す
@@ -1131,10 +1137,11 @@ export class Game {
       retrograde = this.project(dir.negate());
     }
 
-    // 惑星の目印 (遠くて小さく見えるときだけ)
+    // 惑星の目印 (遠くて小さく見えるときだけ)。居住地の中では出さない (壁の向こうなので)
     const markers = [];
+    const inside = !!(this.frame && this.frame.safe);
     const navPlanet = this.nav && this.nav.type === 'planet' ? this.nav.planet : null;
-    for (const planet of this.planets) {
+    for (const planet of inside ? [] : this.planets) {
       if (planet === navPlanet) continue; // 行き先は別の目印で出す
       const dist = planet.group.position.length();
       if (dist > planet.radius * 2.5) {
@@ -1145,7 +1152,7 @@ export class Game {
 
     // オニール・シリンダーの目印 (組ごとに1つ。遠くて小さく見えるときだけ)
     const navHabitat = this.nav && this.nav.type === 'habitat' ? this.nav.habitat : null;
-    for (const h of this.habitats) {
+    for (const h of inside ? [] : this.habitats) {
       if (h.def.spin < 0 || h === navHabitat) continue;
       const dist = h.group.position.length();
       if (dist > h.def.length * 3) {
@@ -1164,6 +1171,10 @@ export class Game {
         dist = rel.length() - this.nav.planet.radius;
       } else if (this.nav.type === 'belt') {
         this.toRender(this.asteroids.center, rel);
+        dist = rel.length();
+      } else if (this.nav.type === 'habitat' && this.nav.habitat === this.frame) {
+        // 中にいるときは宇宙港へ案内する (円筒ローカル座標 = 描画座標の向き)
+        rel.copy(this.frame.spaceport).sub(this.rig.pos);
         dist = rel.length();
       } else if (this.nav.type === 'habitat') {
         this.toRender(this.nav.habitat.pos, rel);
@@ -1236,6 +1247,10 @@ export class Game {
       boresight, prograde, retrograde, markers,
       locked: this.input.mouseActive || this.paused,
       frameName: this.frame ? this.frame.name : null,
+      // 居住地の中では、海面の代わりに軸までの距離と、その場所の重力を出す
+      frameDetail: inside
+        ? `軸まで ${Math.round(Math.hypot(body.pos.x, body.pos.z)).toLocaleString()} m   重力 ${(this.frame.gravityAt(body.pos, this._v).length() / 9.81).toFixed(2)} G`
+        : null,
       altitude: this.altitude,
       altitudeSea: this.altitudeSea,
       grounded: this.grounded,

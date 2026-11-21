@@ -156,3 +156,105 @@ export function capContact(def, x, y, z, margin) {
   }
   return null;
 }
+
+// ---------------------------------------------------------------- 外の部品 (描画と当たり判定で共通の寸法)
+
+/**
+ * 鏡: 窓の帯の外。影の側の端 (y = -H) に蝶番があり、恒星の方へ開く。
+ * offset: 外壁 (半径 R + hull) からの距離、widthK: 窓の帯の幅に対する鏡の幅、thickness: 当たり判定の厚さ
+ */
+export const MIRROR = { angle: (30 * Math.PI) / 180, offset: 60, widthK: 1.05, thickness: 40 };
+
+/**
+ * 鏡 k (0..2) の、円筒ローカル座標での形 (見た目の回転 spinAngle と、開き open (rad) のとき)。
+ * @returns { hinge: [x,y,z] 蝶番の中心, along: 長さの向き, across: 幅の向き, normal: 面の法線 (外向き), length, width }
+ */
+export function mirrorFrame(def, k, spinAngle, open) {
+  const Rh = def.radius + def.hull, H = def.length / 2;
+  const a = k * ((2 * Math.PI) / 3) + Math.PI / 3 + spinAngle; // 窓の帯の中心の向き
+  const out = [Math.sin(a), 0, Math.cos(a)];
+  const across = [Math.cos(a), 0, -Math.sin(a)];
+  const c = Math.cos(open), s = Math.sin(open);
+  return {
+    hinge: [out[0] * (Rh + MIRROR.offset), -H, out[2] * (Rh + MIRROR.offset)],
+    along: [out[0] * s, c, out[2] * s], // 上 (恒星側) の端ほど外へ倒れる
+    across,
+    normal: [out[0] * c, -s, out[2] * c],
+    length: def.length,
+    width: 2 * Rh * Math.sin(Math.PI / 6) * MIRROR.widthK,
+  };
+}
+
+/**
+ * 2本をつなぐ骨組み (組の1本目だけが持つ。もう1本はローカル X の +gap にある)。
+ * 箱 { center: [x,y,z], size: [sx,sy,sz], round: 円柱として描くか } の配列 (円筒ローカル座標)。
+ */
+export function trussParts(def) {
+  if (def.spin < 0) return [];
+  const H = def.length / 2, gap = def.pair.gap, PR = HABITAT.portRadius;
+  const parts = [];
+  // 恒星側: 蓋の外の軸受けから骨組みへ
+  const yy = H + 2600;
+  parts.push({ center: [gap / 2, yy, 0], size: [gap, 260, 260] });
+  for (const x of [0, gap]) parts.push({ center: [x, H + (yy - H) / 2, 0], size: [320, yy - H, 320], round: true });
+  // 影の側: 入港口をふさがないよう、筒の脇を通す
+  const z = PR + 400;
+  parts.push({ center: [gap / 2, -H - 1000, z], size: [gap, 260, 260] });
+  for (const x of [0, gap]) parts.push({ center: [x, -H - 1000, (z + PR + 100) / 2], size: [200, 260, z - PR - 100] });
+  return parts;
+}
+
+/**
+ * 外の点 (円筒ローカル座標) と、外壁・鏡・骨組み・入港口の筒の当たり判定。
+ * 機体を margin (m) の大きさの球として扱う。
+ * @param spinAngle 見た目の回転の角度、open 鏡の開き
+ * @returns { depth, normal: [x,y,z] (押し出す向き), what } | null
+ */
+export function exteriorContact(def, spinAngle, open, x, y, z, margin = 6) {
+  // 外壁 (閉じた円柱)
+  const hc = hullContact(def, x, y, z);
+  if (hc.inside) return { depth: hc.depth + margin, normal: hc.normal, what: '外壁' };
+  if (hc.distance < margin) {
+    // 表面のすぐ外: 近い方の面から押し出す
+    const R = def.radius + def.hull, H = def.length / 2, r = Math.hypot(x, z);
+    if (Math.abs(y) <= H && r > 1e-9) return { depth: margin - hc.distance, normal: [x / r, 0, z / r], what: '外壁' };
+    if (r <= R) return { depth: margin - hc.distance, normal: [0, Math.sign(y), 0], what: '外壁' };
+  }
+  // 入港口の筒の殻 (内側の半径 PR、外側の半径 PR + 100、蓋から portLength)
+  const H = def.length / 2, PR = HABITAT.portRadius, PL = HABITAT.portLength;
+  const r = Math.hypot(x, z);
+  if (y < -H && y > -H - PL - margin && r > PR - margin && r < PR + 100 + margin) {
+    const cands = [
+      { depth: r - (PR - margin), normal: r > 1e-9 ? [-x / r, 0, -z / r] : [1, 0, 0] }, // 筒の中へ
+      { depth: PR + 100 + margin - r, normal: r > 1e-9 ? [x / r, 0, z / r] : [1, 0, 0] }, // 筒の外へ
+      { depth: y - (-H - PL - margin), normal: [0, -1, 0] }, // 筒の口の前へ
+    ];
+    cands.sort((p, q) => p.depth - q.depth);
+    return { ...cands[0], what: '入港口' };
+  }
+  // 鏡 (厚さのある板)
+  for (let k = 0; k < 3; k++) {
+    const m = mirrorFrame(def, k, spinAngle, open);
+    const dx = x - m.hinge[0], dy = y - m.hinge[1], dz = z - m.hinge[2];
+    const along = dx * m.along[0] + dy * m.along[1] + dz * m.along[2];
+    const across = dx * m.across[0] + dy * m.across[1] + dz * m.across[2];
+    const dist = dx * m.normal[0] + dy * m.normal[1] + dz * m.normal[2];
+    const half = MIRROR.thickness / 2 + margin;
+    if (along > -margin && along < m.length + margin && Math.abs(across) < m.width / 2 + margin && Math.abs(dist) < half) {
+      const side = dist >= 0 ? 1 : -1;
+      return { depth: half - Math.abs(dist), normal: m.normal.map((v) => v * side), what: '鏡' };
+    }
+  }
+  // 骨組み (箱。円柱の軸受けも箱で近似する)
+  for (const p of trussParts(def)) {
+    const ex = p.size[0] / 2 + margin, ey = p.size[1] / 2 + margin, ez = p.size[2] / 2 + margin;
+    const qx = x - p.center[0], qy = y - p.center[1], qz = z - p.center[2];
+    if (Math.abs(qx) < ex && Math.abs(qy) < ey && Math.abs(qz) < ez) {
+      const px = ex - Math.abs(qx), py = ey - Math.abs(qy), pz = ez - Math.abs(qz);
+      if (px <= py && px <= pz) return { depth: px, normal: [Math.sign(qx) || 1, 0, 0], what: '骨組み' };
+      if (py <= pz) return { depth: py, normal: [0, Math.sign(qy) || 1, 0], what: '骨組み' };
+      return { depth: pz, normal: [0, 0, Math.sign(qz) || 1], what: '骨組み' };
+    }
+  }
+  return null;
+}
