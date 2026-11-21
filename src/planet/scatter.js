@@ -1,23 +1,25 @@
 import * as THREE from 'three';
 import { faceDir, dirToFace } from '../terrain/chunkBuilder.js';
 import { mulberry32 } from '../math/random.js';
-import { createScatterMaterial, createTreeBillboardMaterial } from './atmosphere.js';
+import { createScatterMaterial, createTreeBillboardMaterial, createBuildingMaterial } from './atmosphere.js';
+import { cityPlan, CITY_CELL, LOTS, SINK, TIER, UPPER, KIND_TOWER } from './city.js';
 
 // 地表に散らばる岩と木。カメラの近くにだけ、InstancedMesh でまとめて描く。
 //
 // 地表をキューブ球の格子 (区画) に区切り、区画ごとにシード付き乱数で置き場所を決める。
 // 同じ区画からは必ず同じものが生えるので、離れて戻ってきても景色は変わらない。
-// 当たり判定はない (見た目だけ)。
+// 岩と木には当たり判定はない (見た目だけ)。都市惑星のビルは city.js の計画どおりに建てるので、
+// 当たり判定 (Planet.groundRadiusAt) と一致する。
 
 const TREE_NEAR = 350; // これより近い木は立体のメッシュ、遠い木はビルボード (板に貼った絵) で描く (m)
 const TREE_FAR = 3000; // 木を描く限界 (m)
 const THIN_DIST = 1600; // これより遠い区画の木は半分に間引く (m)
 const BILLBOARD_MAX = 240000;
-const MAX_ALT = TREE_FAR; // 地面からこれより高い所では何も出さない (m)
+const BUILDING_FAR = 4500; // ビルを描く限界 (m)。その先は地表のシェーダーの模様が引き継ぐ
 const BUDGET_MS = 4; // 1フレームに区画の生成へ使ってよい時間
 const REANCHOR = 2000; // カメラが基準点からこれだけ離れたら基準点を取り直す (m)
 
-const KIND_ROCK = 0, KIND_CONIFER = 1, KIND_BROADLEAF = 2;
+const KIND_ROCK = 0, KIND_CONIFER = 1, KIND_BROADLEAF = 2, KIND_BLOCK = 3, KIND_SPIRE = 4;
 
 const sat = (x) => Math.min(1, Math.max(0, x));
 const smooth = (a, b, x) => {
@@ -87,6 +89,24 @@ function broadleafGeometry() {
     { geo: trunk, color: () => [0.12, 0.085, 0.055] },
     // 下の方ほど暗くして、葉むらの奥行きに見せる
     { geo: crown, color: (y) => { const s = 0.45 + 0.75 * sat((y - 0.34) / 0.64); return [0.075 * s, 0.17 * s, 0.05 * s]; } },
+  ]);
+}
+
+/** 低層・中層のビル (底面 1 × 1、高さ 1、底の中心が原点)。屋上は少し暗い。 */
+function blockGeometry() {
+  const g = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  return merge([{ geo: g, color: (y) => (y > 0.999 ? [0.7, 0.7, 0.7] : [1, 1, 1]) }]);
+}
+
+/** 超高層ビル: 太い下の段、細い上の段 (city.js の TIER・UPPER)、屋上のアンテナ。 */
+function spireGeometry() {
+  const lower = new THREE.BoxGeometry(1, TIER, 1).translate(0, TIER / 2, 0);
+  const upper = new THREE.BoxGeometry(UPPER, 1 - TIER, UPPER).translate(0, (1 + TIER) / 2, 0);
+  const mast = new THREE.CylinderGeometry(0.012, 0.02, 0.12, 4, 1, true).translate(0, 1.06, 0);
+  return merge([
+    { geo: lower, color: (y) => (y > TIER - 0.001 ? [0.7, 0.7, 0.7] : [1, 1, 1]) },
+    { geo: upper, color: (y) => (y > 0.999 ? [0.7, 0.7, 0.7] : [1, 1, 1]) },
+    { geo: mast, color: () => [0.5, 0.5, 0.5] },
   ]);
 }
 
@@ -216,7 +236,7 @@ function billboardGeometry() {
 
 // ---------------------------------------------------------------- 区画の中身を決める
 
-const ROCK_DENSITY = { rock: 0.9, desert: 0.7, lava: 0.75, ice: 0.4, terran: 0.28 };
+const ROCK_DENSITY = { rock: 0.9, desert: 0.7, lava: 0.75, ice: 0.4, terran: 0.28, city: 0 };
 const ROCKS_PER_CELL = 16;
 const TREES_PER_CELL = 56;
 
@@ -263,7 +283,7 @@ function sampleGround(terrain, span) {
 
 /**
  * 区画の中身を作る。three.js の描画には触れないので、単体テストから直接呼べる。
- * @param layer 0 = 岩, 1 = 木
+ * @param layer 0 = 岩, 1 = 木, 2 = ビル (都市惑星のみ)
  * @param n 面の一辺の区画数
  * @returns { center: [x,y,z] (惑星ローカル), lists: { [kind]: { matrices, colors, dims, count } } }
  *   matrices は center からの相対位置で入っている
@@ -285,7 +305,9 @@ export function buildCell(terrain, layer, face, ix, iy, n) {
     a.d.push(_scl.x, _scl.y);
   };
 
-  if (layer === 0) {
+  if (layer === 2) {
+    buildBuildings(terrain, face, ix, iy, n, push);
+  } else if (layer === 0) {
     const base = ROCK_DENSITY[terrain.type] ?? 0.5;
     const flooded = terrain.type === 'terran' || terrain.type === 'lava' || terrain.type === 'ice';
     for (let k = 0; k < ROCKS_PER_CELL; k++) {
@@ -340,6 +362,7 @@ export function buildCell(terrain, layer, face, ix, iy, n) {
         const h = sampleGround(terrain, 2);
         if (h < 3) continue; // 海と砂浜
         if (_nrm.dot(_up) < 0.8) continue; // 急斜面
+        if (terrain.type === 'city' && cityPlan(terrain).roofAt(_d[0], _d[1], _d[2]) > -Infinity) continue; // ビルの中
         const warm = terrain.warmth(h, _d[1]);
         if (warm < 0.3) continue; // 森林限界
         const conifer = warm < 0.6 + (kindR - 0.5) * 0.2;
@@ -366,17 +389,52 @@ export function buildCell(terrain, layer, face, ix, iy, n) {
   return { center, lists };
 }
 
+const _s = [0, 0, 0], _bx = new THREE.Vector3(), _bz = new THREE.Vector3(), _basis = new THREE.Matrix4();
+
+/** 区画 (face, ix, iy) の中の敷地に、city.js の計画どおりにビルを建てる。 */
+function buildBuildings(terrain, face, ix, iy, n, push) {
+  const plan = cityPlan(terrain);
+  const N = plan.N, R = terrain.radius;
+  for (let lj = 0; lj < LOTS; lj++) {
+    for (let li = 0; li < LOTS; li++) {
+      const i = ix * LOTS + li, j = iy * LOTS + lj;
+      const b = plan.lot(face, i, j);
+      if (!b) continue;
+      // 敷地の大きさ (m)。キューブ球の面の端ほど敷地は小さい
+      faceDir(face, i / N, (j + 0.5) / N, _d);
+      faceDir(face, (i + 1) / N, (j + 0.5) / N, _s);
+      _bx.set(_s[0] - _d[0], _s[1] - _d[1], _s[2] - _d[2]);
+      const lotW = _bx.length() * R;
+      faceDir(face, (i + 0.5) / N, j / N, _d);
+      faceDir(face, (i + 0.5) / N, (j + 1) / N, _s);
+      const lotD = Math.hypot(_s[0] - _d[0], _s[1] - _d[1], _s[2] - _d[2]) * R;
+      // ビルの中心の真上を Y、敷地の s 方向を X にした向き
+      faceDir(face, (i + b.cs) / N, (j + b.ct) / N, _d);
+      _up.set(_d[0], _d[1], _d[2]);
+      _bx.addScaledVector(_up, -_bx.dot(_up)).normalize();
+      _bz.crossVectors(_bx, _up);
+      _q.setFromRotationMatrix(_basis.makeBasis(_bx, _up, _bz));
+      _scl.set(b.fw * lotW, b.height + SINK, b.fd * lotD);
+      _pos.copy(_up).multiplyScalar(R + b.ground - SINK);
+      push(b.kind === KIND_TOWER ? KIND_SPIRE : KIND_BLOCK, b.color[0], b.color[1], b.color[2]);
+    }
+  }
+}
+
 // ---------------------------------------------------------------- 描画
 
 const LAYERS = [
   { cell: 48, radius: 420 }, // 岩
   { cell: 96, radius: TREE_FAR }, // 木
+  { cell: CITY_CELL, radius: BUILDING_FAR }, // ビル (city.js の敷地の格子と揃える)
 ];
 // near: この距離より先はメッシュでは描かない (木はビルボードが引き継ぐ)
 const KINDS = [
   { layer: 0, max: 6000, geometry: rockGeometry, wrap: 0, doubleSide: false, near: LAYERS[0].radius, cut: false },
   { layer: 1, max: 6000, geometry: coniferGeometry, wrap: 0.7, doubleSide: true, near: TREE_NEAR, cut: true },
   { layer: 1, max: 6000, geometry: broadleafGeometry, wrap: 0.7, doubleSide: true, near: TREE_NEAR, cut: true },
+  { layer: 2, max: 30000, geometry: blockGeometry, building: true, near: BUILDING_FAR },
+  { layer: 2, max: 6000, geometry: spireGeometry, building: true, near: BUILDING_FAR },
 ];
 
 const _cam = new THREE.Vector3();
@@ -393,8 +451,10 @@ export class Scatter {
     this.uniforms = uniforms;
     this.group = group;
     const R = terrain.radius;
-    // 木は海洋惑星にしかない
-    const layerCount = terrain.type === 'terran' ? 2 : 1;
+    // 木は海洋惑星と都市惑星 (公園) にしかない。ビルは都市惑星だけ
+    const city = terrain.type === 'city';
+    const layerCount = city ? 3 : terrain.type === 'terran' ? 2 : 1;
+    this.maxAlt = city ? 7000 : TREE_FAR; // 地面からこれより高い所では何も出さない (m)
     this.layers = LAYERS.slice(0, layerCount).map((def, index) => {
       const level = Math.max(0, Math.round(Math.log2((Math.PI / 2) * R / def.cell)));
       const n = 2 ** level;
@@ -415,9 +475,9 @@ export class Scatter {
   _createMeshes() {
     this.meshes = KINDS.map((k) => {
       if (k.layer >= this.layers.length) return null;
-      const material = createScatterMaterial(this.uniforms, {
-        fadeDist: k.near, wrap: k.wrap, doubleSide: k.doubleSide, cut: k.cut,
-      });
+      const material = k.building
+        ? createBuildingMaterial(this.uniforms, { fadeDist: k.near })
+        : createScatterMaterial(this.uniforms, { fadeDist: k.near, wrap: k.wrap, doubleSide: k.doubleSide, cut: k.cut });
       const mesh = new THREE.InstancedMesh(k.geometry(), material, k.max);
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(k.max * 3), 3);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -444,10 +504,10 @@ export class Scatter {
   update(camLocal) {
     const R = this.terrain.radius;
     const r = camLocal.length();
-    let near = r - R < MAX_ALT + 15000;
+    let near = r - R < this.maxAlt + 15000;
     if (near) {
       const h = this.terrain.height(camLocal.x / r, camLocal.y / r, camLocal.z / r, 50);
-      near = r - R - Math.max(0, h) < MAX_ALT;
+      near = r - R - Math.max(0, h) < this.maxAlt;
     }
     if (!near) {
       if (this.active) this._hide();

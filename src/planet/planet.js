@@ -5,6 +5,7 @@ import { makeAtmosphereUniforms, createTerrainMaterial, createSkyMaterial, creat
 import { Scatter } from './scatter.js';
 import { mulberry32 } from '../math/random.js';
 import { FRAME_ENTER, FRAME_EXIT } from '../universe/system.js';
+import { cityPlan } from './city.js';
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const _q = new THREE.Quaternion();
@@ -109,6 +110,9 @@ export class Planet {
       this.group.add(this.body);
     } else {
       this.terrain = makeTerrain(def);
+      // 都市惑星: ビルにも当たる (屋上に着陸できる)
+      this.city = this.terrain.type === 'city' ? cityPlan(this.terrain) : null;
+      if (this.city) this.uniforms.uLotN.value = this.city.N;
       this.lod = new PlanetLod(def, this.terrain, material, this.group);
       this.scatter = new Scatter(this.terrain, this.uniforms, this.group); // 岩と木
       this.body = null;
@@ -153,10 +157,13 @@ export class Planet {
     return this.terrain.height(local.x * inv, local.y * inv, local.z * inv, 1);
   }
 
-  /** その点の地面 (または水面) の、惑星中心からの距離。 */
+  /** その点の地面 (または水面・ビルの屋上) の、惑星中心からの距離。 */
   groundRadiusAt(local) {
     if (this.gas) return this.radius;
-    return this.radius + Math.max(0, this.heightAt(local));
+    const ground = Math.max(0, this.heightAt(local));
+    if (!this.city) return this.radius + ground;
+    const inv = 1 / local.length();
+    return this.radius + Math.max(ground, this.city.roofAt(local.x * inv, local.y * inv, local.z * inv));
   }
 
   /** 惑星中心から距離 r での重力加速度の大きさ (m/s²)。 */

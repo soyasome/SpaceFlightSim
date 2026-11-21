@@ -10,7 +10,30 @@ const lerp = (a, b, t) => a + (b - a) * t;
 /** 惑星の種類ごとの呼び名 (星図に出す)。 */
 export const TYPE_LABEL = {
   terran: '海洋惑星', desert: '砂漠惑星', ice: '氷惑星', lava: '溶岩惑星', rock: '岩石天体', gas: 'ガス巨星',
+  city: '都市惑星',
 };
+
+/** 文明の栄えた星系の割合。その星系の住みやすい惑星が1つ、表面を街に覆われた都市惑星 (エキュメノポリス) になる。 */
+export const CITY_CHANCE = 0.15;
+
+/**
+ * 海洋惑星・砂漠惑星を都市惑星に作り変える。
+ * 起伏は低く (造成された平地)、海は狭く、空はスモッグで少しかすむ。
+ */
+function makeCity(body, rand) {
+  const k = body.radius / 400e3; // makeBody と同じく、小さな天体ほど起伏を低くする
+  body.type = 'city';
+  body.terrain = {
+    type: 'city', land: lerp(0.12, 0.3, rand()),
+    cAmp: 1600 * k, mAmp: 1400 * k, hAmp: 120 * k, tint: null,
+  };
+  body.atmosphere = {
+    ...AIR_EARTH, surfaceDensity: lerp(1.0, 1.4, rand()), scaleHeightM: 1800,
+    betaM: lerp(8e-6, 12e-6, rand()), // スモッグ
+  };
+  body.skyLight = [0.36, 0.41, 0.52];
+  return body;
+}
 
 /** 機体をその座標系で動かし始める距離 (惑星半径の倍数)。planet.js と揃えること。 */
 export const FRAME_ENTER = 6;
@@ -295,6 +318,13 @@ export function generateSystem(star) {
     a *= 1.45 + rand() * 0.5;
   }
 
+  // 都市惑星。ほかの天体の配置を変えないよう、別の乱数で決める
+  const crand = mulberry32((star.seed ^ 0x6c8e9cf5) >>> 0);
+  if (crand() < CITY_CHANCE) {
+    const home = planets.find((p) => p.parent === null && (p.type === 'terran' || p.type === 'desert'));
+    if (home) makeCity(home, crand);
+  }
+
   // 小惑星帯: 惑星から十分離れた場所に1つ置くことがある
   let belt = null;
   if (rand() < 0.6) {
@@ -320,7 +350,8 @@ export function generateSystem(star) {
   if (belt && rand() < 0.6) zones.push({ kind: 'belt', roster: roster() });
   planets.forEach((p, i) => {
     if (p.type === 'gas' || !p.atmosphere || p.atmosphere.surfaceDensity < 0.5) return;
-    if (rand() < 0.35) {
+    const r = rand(); // 都市惑星は必ず守られているが、乱数は同じ数だけ引く (ほかの哨戒隊が変わらないように)
+    if (p.type === 'city' || r < 0.35) {
       zones.push({ kind: 'planet', planet: i, lat: (rand() - 0.5) * 100, lon: rand() * 360, altitude: 5000, roster: roster() });
     }
   });

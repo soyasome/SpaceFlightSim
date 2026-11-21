@@ -99,6 +99,9 @@ export function makeAtmosphereUniforms(def) {
     // (海岸では陸の 0 と海の 1 が補間されて 0.5 を通るため)
     uLava: { value: ((def.terrain && def.terrain.type) || def.type) === 'lava' ? 1 : 0 },
     uSkyLight: { value: new THREE.Vector3(...(def.skyLight || [0.3, 0.42, 0.62])) },
+    // 都市惑星: 頂点色の α (0..0.5) を街の濃さと読み、敷地の格子 (一辺 uLotN 個) に沿って道路と夜の街明かりを描く
+    uCity: { value: ((def.terrain && def.terrain.type) || def.type) === 'city' ? 1 : 0 },
+    uLotN: { value: 1 },
   };
 }
 
@@ -141,6 +144,49 @@ vec3 bumpNormal(vec3 N, vec3 p, float h) {
 }
 `;
 
+/**
+ * 都市惑星の道路と夜景の GLSL (地表のシェーダー用)。
+ * キューブ球の面を city.js と同じ敷地の格子に区切り、敷地の縁を道路とする。
+ */
+const CITY_GLSL = /* glsl */ `
+// p: 惑星ローカル座標 (惑星中心が原点)。道路らしさ (0..1) を返し、敷地の番号を id に入れる。
+// 1ピクセルに道路が何本も入るほど遠い所では、道路の面積の割合 (平均) を返す
+float cityStreet(vec3 p, float N, out vec2 id) {
+  vec3 a = abs(p);
+  vec2 st;
+  if (a.x >= a.y && a.x >= a.z) st = p.zy / a.x;
+  else if (a.y >= a.z) st = p.xz / a.y;
+  else st = p.xy / a.z;
+  vec2 g = (st * 0.5 + 0.5) * N; // 敷地の格子の座標 (整数の所が道路の中心)
+  id = floor(g);
+  vec2 e = abs(fract(g) - 0.5); // 0 = 敷地の中央, 0.5 = 道路の中央
+  float w = max(fwidth(g.x), fwidth(g.y));
+  const float half_ = 0.5 - ${(0.18 / 2).toFixed(3)}; // 道路の内側の縁 (city.js の STREET)
+  float s = smoothstep(half_ - w, half_ + w, max(e.x, e.y));
+  return mix(s, 0.34, smoothstep(0.25, 0.6, w));
+}
+
+float lotHash(vec2 id) {
+  return fract(sin(dot(id, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// 夜の街明かり (足し込む光)。p: 惑星ローカル座標。sunUp: 鉛直と太陽の向きの内積
+vec3 cityLights(vec3 p, float urb, float street, vec2 id, float sunUp, float dist) {
+  float night = 1.0 - smoothstep(-0.12, 0.08, sunUp);
+  if (night <= 0.0 || urb <= 0.0) return vec3(0.0);
+  // 明かりの濃淡: 数十 km の街のまとまりと、数 km の繁華街。暗い隙間を残して網目のように見せる
+  float web = vnoise(p / 28000.0, 4096.0) * 0.6 + vnoise(p / 5000.0 + 17.0, 4096.0) * 0.4;
+  float glow = smoothstep(0.3, 0.75, web) * urb;
+  glow = glow * glow * 1.6 + 0.08 * urb;
+  // 道路の街灯 (橙) と、敷地ごとにまちまちな建物の明かり (白〜青)
+  float lots = step(0.45, lotHash(id)) * (1.0 - street);
+  float far = smoothstep(3000.0, 12000.0, dist); // 遠くでは建物の明かりも面の平均になる
+  lots = mix(lots, 0.3, far);
+  vec3 c = vec3(1.0, 0.55, 0.22) * street * 0.7 + vec3(0.75, 0.8, 0.9) * lots * 0.3;
+  return c * glow * night;
+}
+`;
+
 /** 地表のマテリアル。頂点色 + 太陽光 + 大気によるかすみ。 */
 export function createTerrainMaterial(uniforms) {
   return new THREE.ShaderMaterial({
@@ -172,11 +218,14 @@ export function createTerrainMaterial(uniforms) {
       uniform vec3 uCamTile2;
       uniform float uTime;
       uniform float uLava;
+      uniform float uCity;
+      uniform float uLotN;
       uniform vec3 uSkyLight; // 空からの光の色 (大気がなければほぼ黒)
       varying vec3 vRel;
       varying vec3 vNormal;
       varying vec4 vColor;
       ${NOISE_GLSL}
+      ${CITY_GLSL}
 
       void main() {
         #include <logdepthbuf_fragment>
@@ -190,6 +239,14 @@ export function createTerrainMaterial(uniforms) {
         float water = step(0.75, vColor.a);
         float lava = (step(0.25, vColor.a) - water) * uLava;
         float ground = 1.0 - water;
+        // 都市: 街の濃さ (0..1) と、敷地の格子に沿った道路 (city.js と同じ格子)
+        float urb = 0.0, street = 0.0;
+        vec2 lotId = vec2(0.0);
+        vec3 pLocal = uPlanetRotInv * (vRel - uPlanetCenter); // 惑星ローカル座標
+        if (uCity > 0.5) {
+          urb = clamp(vColor.a * 2.0, 0.0, 1.0) * ground;
+          street = cityStreet(pLocal, uLotN, lotId);
+        }
 
         // 頂点色とメッシュの法線だけだとのっぺりするので、ノイズで模様と凹凸を足す。
         // 細かい模様ほど近くでだけ見せる (遠くではちらつくため)。
@@ -216,6 +273,7 @@ export function createTerrainMaterial(uniforms) {
                            * (1.0 - smoothstep(0.3, 0.8, altW * 0.03));
         detail += (strataFine * 0.35 + strataCoarse * 0.7) * steep;
         albedo *= 1.0 + detail * ground;
+        albedo *= 1.0 - 0.45 * street * urb; // アスファルトの道路
 
         // 凹凸 (m) として法線も傾ける。水面では、向きの違う2枚のノイズを流して波にする。
         // (画面上の差分を使うので、分岐の外でまとめて計算する)
@@ -236,6 +294,7 @@ export function createTerrainMaterial(uniforms) {
         vec3 skyLight = uSkyLight * uSunI * 0.011 * day;
         vec3 col = albedo * (light + skyLight + vec3(0.0015, 0.002, 0.003));
         col += albedo * lava * 1.0; // 溶岩は夜でも光る
+        if (uCity > 0.5) col += cityLights(pLocal, urb, street, lotId, dot(up, uSunDir), dist);
 
         // 水面: さざ波、太陽の反射、浅い角度で映る空、波打ち際の白波
         if (water > 0.5) {
@@ -345,6 +404,101 @@ export function createScatterMaterial(uniforms, { fadeDist, wrap = 0, doubleSide
         // 空からの光は上向きの面ほど強い
         vec3 skyLight = uSkyLight * uSunI * 0.011 * day * (0.65 + 0.35 * dot(N, up));
         vec3 col = vColor * (light + skyLight + vec3(0.0015, 0.002, 0.003));
+
+        vec3 T;
+        vec3 ins = scatter(dir, 0.0, dist, T);
+        col = col * T + ins;
+
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+/**
+ * 都市惑星のビル (InstancedMesh) のマテリアル。地表と同じ光とかすみに、窓を足す。
+ * 窓は機体ではなくビルの大きさ (m) で並べるので、インスタンスの拡大率を戻した座標で描く。
+ * 昼は暗いガラス、夜は部屋ごとにまちまちに灯る。
+ * @param fadeDist この距離に近づくにつれて縮めて消す (m)
+ */
+export function createBuildingMaterial(uniforms, { fadeDist }) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...uniforms, uFadeDist: { value: fadeDist } },
+    vertexShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      attribute vec3 aTint;
+      uniform float uFadeDist;
+      varying vec3 vRel;
+      varying vec3 vNormal;
+      varying vec3 vColor;
+      varying vec3 vObj;     // ビルの中の位置 (m)。y は地面から
+      varying vec3 vObjN;    // ビルの座標での法線
+      varying float vSeed;   // ビルごとの乱数
+      void main() {
+        vec4 origin = modelMatrix * vec4(instanceMatrix[3].xyz, 1.0);
+        float s = 1.0 - smoothstep(0.75 * uFadeDist, uFadeDist, length(origin.xyz));
+        vec4 wp = modelMatrix * (instanceMatrix * vec4(position * vec3(1.0, s, 1.0), 1.0));
+        vec3 scl = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+        vObj = position * scl;
+        vObjN = normal;
+        vSeed = fract(sin(dot(instanceMatrix[3].xyz, vec3(0.0123, 0.0457, 0.0789))) * 43758.5453);
+        vNormal = mat3(modelMatrix) * (mat3(instanceMatrix) * (normal / scl));
+        vColor = aTint * instanceColor;
+        vRel = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: /* glsl */ `
+      #define PRIMARY_STEPS 4
+      #define LIGHT_STEPS 2
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      ${ATMOSPHERE_GLSL}
+      uniform vec3 uSkyLight;
+      varying vec3 vRel;
+      varying vec3 vNormal;
+      varying vec3 vColor;
+      varying vec3 vObj;
+      varying vec3 vObjN;
+      varying float vSeed;
+      float h2(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + vSeed * 91.7) * 43758.5453); }
+      void main() {
+        #include <logdepthbuf_fragment>
+        float dist = length(vRel);
+        vec3 dir = vRel / dist;
+        vec3 N = normalize(vNormal);
+        vec3 pc = vRel - uPlanetCenter;
+        vec3 up = normalize(pc);
+
+        // 窓: 外壁を 階 (3.6 m) × 柱の間隔 (3.2 m) のマス目に区切る。屋上と1階にはない
+        float wall = 1.0 - step(0.5, abs(vObjN.y));
+        vec2 cell = vec2((abs(vObjN.x) > 0.5 ? vObj.z : vObj.x) / 3.2, vObj.y / 3.6);
+        vec2 f = fract(cell);
+        vec2 aa = fwidth(cell);
+        vec2 box = smoothstep(vec2(0.15, 0.22) - aa, vec2(0.15, 0.22) + aa, f)
+                 * (1.0 - smoothstep(vec2(0.85, 0.82) - aa, vec2(0.85, 0.82) + aa, f));
+        float win = box.x * box.y;
+        win = mix(win, 0.42, smoothstep(0.3, 0.7, max(aa.x, aa.y))); // 遠くでは面の平均
+        win *= wall * step(4.0, vObj.y);
+
+        vec2 odL = lightDepth(pc);
+        vec3 sunT = exp(-(uBetaR * odL.x + uBetaM * 1.1 * odL.y));
+        float ndl = max(dot(N, uSunDir), 0.0);
+        vec3 light = sunT * uSunI * 0.085 * ndl;
+        float day = smoothstep(-0.2, 0.3, dot(up, uSunDir));
+        vec3 skyLight = uSkyLight * uSunI * 0.011 * day * (0.65 + 0.35 * dot(N, up));
+        vec3 albedo = vColor * (1.0 - 0.55 * win); // 窓ガラスは外壁より暗い
+        // 地面に近いほど暗い (足元に回り込む光が少ない)
+        albedo *= 0.75 + 0.25 * smoothstep(0.0, 30.0, vObj.y);
+        vec3 col = albedo * (light + skyLight + vec3(0.0015, 0.002, 0.003));
+        // 夜の窓明かり。部屋ごとに点いたり消えたりしている
+        float night = 1.0 - smoothstep(-0.12, 0.08, dot(up, uSunDir));
+        float lit = step(0.55, h2(floor(cell)));
+        lit = mix(lit, 0.45, smoothstep(0.3, 0.7, max(aa.x, aa.y)));
+        vec3 warm = mix(vec3(1.0, 0.72, 0.42), vec3(0.75, 0.85, 1.0), step(0.7, vSeed));
+        col += warm * win * lit * night * 0.55;
 
         vec3 T;
         vec3 ins = scatter(dir, 0.0, dist, T);

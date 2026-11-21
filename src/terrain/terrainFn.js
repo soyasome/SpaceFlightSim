@@ -12,7 +12,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const DEFAULT_TERRAIN = { type: 'terran', land: 0.05, cAmp: 2800, mAmp: 6500, hAmp: 320, tint: null };
 
 /** クレーターの深さの倍率 (種類ごとの既定値)。大気や水のある天体では風化して浅い。 */
-const CRATER_DEFAULT = { rock: 1, ice: 0.3, desert: 0.35, lava: 0.2, terran: 0 };
+const CRATER_DEFAULT = { rock: 1, ice: 0.3, desert: 0.35, lava: 0.2, terran: 0, city: 0 };
 
 /**
  * 渓谷と段丘 (メサ) の種類ごとの設定。
@@ -57,7 +57,7 @@ const CLIFFS = {
  *
  * def = { seed, radius, terrain? }
  * terrain = { type, land, cAmp, mAmp, hAmp, tint }
- *   type  'terran' 海洋 | 'desert' 砂漠 | 'ice' 氷 | 'lava' 溶岩 | 'rock' 岩石 (大気なし)
+ *   type  'terran' 海洋 | 'desert' 砂漠 | 'ice' 氷 | 'lava' 溶岩 | 'rock' 岩石 (大気なし) | 'city' 都市
  *   land  大きいほど陸 (高地) が増える。標高 0 以下は平らな「低地」になり、
  *         種類によって海・乾いた盆地・氷原・溶岩の海として描かれる
  *   cAmp, mAmp, hAmp  大陸・山脈・丘の高さ (m)
@@ -384,10 +384,23 @@ export function makeTerrain(def) {
   }
 
   /**
+   * 街の濃さ (0..1)。都市惑星の陸地だけ。0.25 を下回る所は公園、0.7 を超える所は高層ビルの立つ都心。
+   * 地表の色・夜の街明かり・ビルの置き方 (city.js) がこれを使う。
+   */
+  function urban(h, x, y, z) {
+    if (type !== 'city' || h <= 1) return 0;
+    const district = fbm(x * 6 + 21.1, y * 6 - 7.7, z * 6 + 3.9, 3); // 地区ごとの濃さ (数十 km)
+    const core = fbm(x * 22 - 4.2, y * 22 + 9.3, z * 22 + 12.6, 2); // 都心 (数 km)
+    const u = 0.5 + district * 0.7 + core * 0.45;
+    return sat(u) * smooth(1, 20, h); // 波打ち際には建てない
+  }
+
+  /**
    * 木の生えやすさ (0..1)。海洋惑星の、湿っていて寒すぎない陸地にだけ森がある。
-   * 地表の色 (colorTerran) の森の範囲と揃えてある。
+   * 地表の色 (colorTerran) の森の範囲と揃えてある。都市惑星では公園にだけ木がある。
    */
   function forest(h, x, y, z) {
+    if (type === 'city') return h < 4 ? 0 : smooth(0.3, 0.1, urban(h, x, y, z)) * smooth(4, 30, h);
     if (type !== 'terran' || h < 4) return 0;
     const m = sat(moisture(x, y, z) * 1.6 + 0.5);
     return smooth(0.42, 0.75, m) * smooth(0.3, 0.45, warmth(h, y)) * smooth(4, 30, h);
@@ -443,6 +456,27 @@ export function makeTerrain(def) {
     r = lerp(r, 0.92, t); g = lerp(g, 0.94, t); b = lerp(b, 0.97, t);
 
     out[0] = r; out[1] = g; out[2] = b; out[3] = 0;
+  }
+
+  /** 都市惑星の色。out[3] には街の濃さの半分を入れる (シェーダーが夜の街明かりに使う)。 */
+  function colorCity(out, h, slope, x, y, z) {
+    if (h <= 0) {
+      colorTerran(out, h, slope, x, y, z);
+      return;
+    }
+    const u = urban(h, x, y, z);
+    const vary = n.noise(x * 900 + 0.5, y * 900 + 0.5, z * 900 + 0.5) * 0.5;
+    const k = 1 + vary * 0.4;
+    // 公園 → 郊外 (明るいコンクリート) → 都心 (暗いアスファルトと屋上)
+    let r = 0.08, g = 0.17, b = 0.055;
+    let t = smooth(0.12, 0.35, u);
+    r = lerp(r, 0.34, t); g = lerp(g, 0.33, t); b = lerp(b, 0.31, t);
+    t = smooth(0.55, 1, u);
+    r = lerp(r, 0.2, t); g = lerp(g, 0.2, t); b = lerp(b, 0.22, t);
+    t = smooth(14, 2, h); // 護岸
+    r = lerp(r, 0.42, t); g = lerp(g, 0.41, t); b = lerp(b, 0.4, t);
+    out[0] = r * k; out[1] = g * k; out[2] = b * k;
+    out[3] = u * 0.5;
   }
 
   /**
@@ -505,11 +539,12 @@ export function makeTerrain(def) {
 
   /**
    * 地表の色 (リニアRGB) を out[0..2] に、面の種類を out[3] に入れる
-   * (0 = 地面, 1 = 水面, 0.5 = 光る溶岩)。
+   * (0 = 地面, 1 = 水面, 0.5 = 光る溶岩。都市惑星の陸では 0..0.5 = 街の濃さの半分)。
    * slope: 法線と鉛直の内積 (1 = 水平, 0 = 垂直の崖)
    */
   function color(out, h, slope, x, y, z) {
     if (type === 'terran') colorTerran(out, h, slope, x, y, z);
+    else if (type === 'city') colorCity(out, h, slope, x, y, z);
     else colorDry(out, h, slope, x, y, z);
     if (T.tint) {
       out[0] *= T.tint[0]; out[1] *= T.tint[1]; out[2] *= T.tint[2];
@@ -517,7 +552,7 @@ export function makeTerrain(def) {
   }
 
   return {
-    radius: R, type, seed: def.seed, height, color, forest, warmth,
+    radius: R, type, seed: def.seed, height, color, forest, warmth, urban,
     /** 生のノイズ (およそ -1..1)。岩の散らばり方などに使う。 */
     noise: (x, y, z) => n.noise(x, y, z),
   };
