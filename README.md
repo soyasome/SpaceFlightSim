@@ -29,9 +29,9 @@ python serve.py
 - `src/flight` 機体と操縦系 (`shipParams.js` に調整値)、空力 (`aero.js`)、接地 (`ground.js`。接触点ごとに真下の地面を調べるので、崖の壁にも当たる)
 - `src/audio` 効果音 (Web Audio で合成)
 - `src/combat` 戦闘 (`combat.js` 全体の管理、`ai.js` 敵の操縦、`projectiles.js` 弾とミサイル、`targeting.js` 見越し計算、`effects.js` 演出)
-- `src/universe` 銀河 (`galaxy.js`)、星系 (`system.js`)、ダイソン・スウォーム (`swarm.js`) の生成。three.js に依存しない
+- `src/universe` 銀河 (`galaxy.js`)、星系 (`system.js`)、ダイソン・スウォーム (`swarm.js`)、オニール・シリンダー (`habitat.js`) の生成。three.js に依存しない
 - `src/camera` 視点
-- `src/render` 星空、塵、小惑星、機体モデル、ダイソン・スウォーム (`swarm.js`)
+- `src/render` 星空、塵、小惑星、機体モデル、ダイソン・スウォーム (`swarm.js`)、オニール・シリンダーの外観 (`habitat.js`)
 - `src/terrain` 地形 (ノイズ、標高関数、チャンク生成、Worker)。three.js に依存しない。
   標高関数 (`terrainFn.js`) にはドメインワープ・侵食風ノイズ・クレーター・段のある渓谷・崖で囲まれた台地 (メサ) が入っている。
   渓谷と台地の種類ごとの設定は `CLIFFS`
@@ -65,7 +65,11 @@ python serve.py
   約12%の星系は**ダイソン・スウォーム**に囲まれている。傾きの違う何本もの帯に、六角形の集光パネル
   (1枚の半径が数十万 km) が数千〜1万枚並ぶ。表 (恒星側) は太陽電池、裏は排熱板で鈍く赤く光る。
   外から見ると恒星は暗く赤くなり (遠くの星空でも分かる)、外側の惑星に届く光も弱まる。
-  パネルには当たり判定がある。星図で行き先にできる
+  パネルには当たり判定がある。星図で行き先にできる。
+  **オニール・シリンダー** (半径 4 km、長さ 32 km の円筒の居住地) が2本1組で、出発地 SOL の TERRA の L5 (`INSULA I / II`) と、
+  都市惑星の L4 か L5 にある。軸は恒星を向き、窓の外の鏡が花びらのように開く。2本は逆向きに回って見える
+  (回っているのは見た目だけ)。外壁には当たり判定があり、巡航は外壁に近づくと減速する。中にはまだ入れない
+  (設計と今後の段階: `docs/design-oneill-cylinder.md`)
   (`src/universe/system.js`)。出発地の SOL 星系だけは太陽系に似せて手で配置してある
   (名前はラテン語: MERCURIUS, VENUS, TERRA, MARS, IUPPITER, SATURNUS, URANUS, NEPTUNUS と主な衛星)。
   軌道半径は本物と同じ天文単位、大きさは TERRA (半径 400 km) を基準にした比率。土星には環がある (当たり判定なし)。

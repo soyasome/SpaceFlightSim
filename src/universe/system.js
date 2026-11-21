@@ -1,6 +1,7 @@
 import { mulberry32 } from '../math/random.js';
 import { AU } from './galaxy.js';
 import { makeSwarm } from './swarm.js';
+import { makeHabitatPair, lagrangePoint } from './habitat.js';
 
 // 恒星から、その星系の惑星・小惑星帯・敵の哨戒隊を決める。three.js には依存しない。
 // 位置はすべて「星系座標」= 恒星の中心を原点とした m。
@@ -267,8 +268,11 @@ function homeSystem(star) {
   add('TRITON', 'ice', 1501, 85e3, around(planets[nep].position, 16e6, 140), nep,
     { ...NO_AIR, gravity: 1.2, terrain: { tint: [1.05, 0.95, 0.92] } });
 
+  // TERRA のラグランジュ点 L5 に、オニール・シリンダーを1組
+  const habitats = makeHabitatPair('home:L5', ['INSULA I', 'INSULA II'], lagrangePoint(terraPos, -60));
+
   return {
-    star, planets, start, swarm: null,
+    star, planets, start, swarm: null, habitats,
     belt: { position: [start[0], start[1] - 600, start[2] - 9000], seed: 9 },
     zones: [
       { kind: 'belt', roster: ['raider', 'raider'] },
@@ -281,6 +285,7 @@ function homeSystem(star) {
  * 星系を作る。
  * @returns { star, planets: [天体の定義], belt: { position, seed } | null, zones: [敵の哨戒隊], swarm, start? }
  *   swarm: ダイソン・スウォームの定義 (swarm.js の makeSwarm) | null
+ *   habitats: オニール・シリンダー (habitat.js の makeHabitatPair) の配列。2本1組
  */
 export function generateSystem(star) {
   if (star.home) return homeSystem(star);
@@ -322,9 +327,16 @@ export function generateSystem(star) {
 
   // 都市惑星。ほかの天体の配置を変えないよう、別の乱数で決める
   const crand = mulberry32((star.seed ^ 0x6c8e9cf5) >>> 0);
+  const habitats = [];
   if (crand() < CITY_CHANCE) {
     const home = planets.find((p) => p.parent === null && (p.type === 'terran' || p.type === 'desert'));
-    if (home) makeCity(home, crand);
+    if (home) {
+      makeCity(home, crand);
+      // 都市惑星のラグランジュ点 L4 か L5 に、オニール・シリンダーを1組
+      const L = crand() < 0.5 ? 4 : 5;
+      habitats.push(...makeHabitatPair(`${star.id}:L${L}`, [`${home.name} L${L}-A`, `${home.name} L${L}-B`],
+        lagrangePoint(home.position, L === 4 ? 60 : -60)));
+    }
   }
 
   // 小惑星帯: 惑星から十分離れた場所に1つ置くことがある
@@ -362,5 +374,5 @@ export function generateSystem(star) {
   const inner = Math.min(...planets.filter((p) => p.parent === null).map((p) => Math.hypot(...p.position)));
   const swarm = makeSwarm(star, inner);
 
-  return { star, planets, belt, zones, swarm };
+  return { star, planets, belt, zones, swarm, habitats };
 }

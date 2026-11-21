@@ -115,6 +115,12 @@ export class StarMap {
       this._row(this.bodies, p.name, `${TYPE_LABEL[p.type] || p.type}${air}`, formatDistance(dist), selected,
         pick(selected ? null : { type: 'planet', planet: p }), isMoon(p) ? 'indent' : '');
     }
+    for (const h of game.habitats) {
+      const selected = !!nav && nav.type === 'habitat' && nav.habitat === h;
+      const dist = Math.max(0, h.sysPos.distanceTo(here) - h.radius);
+      this._row(this.bodies, h.name, 'オニール・シリンダー', formatDistance(dist), selected,
+        pick(selected ? null : { type: 'habitat', habitat: h }));
+    }
     const sw = game.system.swarm;
     if (sw) {
       const selected = !!nav && nav.type === 'swarm';

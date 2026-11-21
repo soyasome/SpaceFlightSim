@@ -21,6 +21,8 @@ import { enterFrame, leaveFrame } from './physics/frame.js';
 import { Combat } from './combat/combat.js';
 import { SwarmView } from './render/swarm.js';
 import { nearestPanel, HIT_RADIUS } from './universe/swarm.js';
+import { HabitatView } from './render/habitat.js';
+import { hullContact } from './universe/habitat.js';
 
 const CAMERA_CLEARANCE = 1.2; // カメラが地面にめり込まないための最低高度 (m)
 const RESPAWN_TIME = 3.5; // 機体を失ってから復帰するまで (秒)
@@ -88,7 +90,9 @@ export class Game {
     this.cruiseDist = Infinity; // いちばん近い天体の表面までの距離 (巡航の速さを決める)
     this.starDist = Infinity; // 恒星の中心までの距離 (m)
     this.galPos = [...HOME_STAR.pos]; // 銀河座標 (光年)
-    this.nav = null; // 行き先 { type: 'planet' | 'star' | 'belt' | 'swarm', planet?, star?, point? (swarm: 星系座標) }
+    this.nav = null; // 行き先 { type: 'planet' | 'star' | 'belt' | 'swarm' | 'habitat', planet?, star?, point? (swarm: 星系座標), habitat? }
+    this.habitats = []; // オニール・シリンダーの外観 (HabitatView)
+    this.habitatHit = null; // いちばん近いシリンダーの外壁との関係 { habitat, contact }
     this.swarm = null; // ダイソン・スウォームの描画 (ない星系では null)
     this.swarmHit = null; // いちばん近いパネル (nearestPanel の結果)
     this._sysPos = new THREE.Vector3();
@@ -260,6 +264,7 @@ export class Game {
   step(h) {
     this.simTime += h;
     for (const p of this.planets) p.updateRotation(this.simTime);
+    for (const h of this.habitats) h.updateRotation(this.simTime);
 
     if (this.destroyed) {
       this.respawnTimer -= h;
@@ -388,6 +393,13 @@ export class Game {
       // 巡航の速さは、惑星だけでなく恒星の表面までの距離でも抑える
       const toStar = body.pos.distanceTo(this.sunPos) - this.star.radius;
       this.cruiseDist = Math.max(0, Math.min(nearest, toStar));
+      // オニール・シリンダー: 外壁までの距離で巡航を抑え、当たり判定のために覚えておく
+      this.habitatHit = null;
+      for (const h of this.habitats) {
+        const c = hullContact(h.def, ...h.toLocal(body.pos, this._v).toArray());
+        if (!this.habitatHit || c.distance < this.habitatHit.contact.distance) this.habitatHit = { habitat: h, contact: c };
+        this.cruiseDist = Math.min(this.cruiseDist, c.distance);
+      }
       this.swarmHit = null;
       if (this.system.swarm) {
         const p = this.shipSysPos(this._sysPos);
@@ -411,6 +423,11 @@ export class Game {
       this.swarm.dispose();
       this.swarm = null;
     }
+    for (const h of this.habitats) {
+      this.scene.remove(h.group);
+      h.dispose();
+    }
+    this.habitatHit = null;
     this.frame = null;
     this.star = star;
     this.system = generateSystem(star);
@@ -421,6 +438,11 @@ export class Game {
     if (swarm) {
       this.swarm = new SwarmView(swarm, star.color);
       this.scene.add(this.swarm.group);
+    }
+    this.habitats = (this.system.habitats || []).map((def) => new HabitatView(def));
+    for (const h of this.habitats) {
+      h.updateRotation(this.simTime);
+      this.scene.add(h.group);
     }
     for (const p of this.planets) {
       p.updateRotation(this.simTime);
@@ -450,6 +472,7 @@ export class Game {
   _placeWorld() {
     this.sunPos.copy(this.origin).negate();
     for (const p of this.planets) p.pos.subVectors(p.sysPos, this.origin);
+    for (const h of this.habitats) h.pos.subVectors(h.sysPos, this.origin);
     const belt = this.system.belt;
     if (belt) this.asteroids.center.set(belt.position[0], belt.position[1], belt.position[2]).sub(this.origin);
   }
@@ -520,6 +543,26 @@ export class Game {
         }
       }
     }
+    // オニール・シリンダーの外壁にぶつかる (物理の上では外壁は止まっている)
+    const hh = this.habitatHit;
+    if (hh && hh.contact.inside && !this.frame && !this.destroyed) {
+      const h = hh.habitat, c = hh.contact;
+      const n = this._v2.set(...c.normal).applyQuaternion(h.quat); // 押し出す向き (世界座標)
+      body.pos.addScaledVector(n, c.depth + 2);
+      body.prevPos.copy(body.pos);
+      const vn = body.vel.dot(n);
+      if (vn < 0) {
+        const impact = -vn;
+        body.vel.addScaledVector(n, -vn * 1.3); // 跳ね返る
+        if (ship.driving) ship.stopCruise();
+        if (impact > 15) {
+          ship.hull -= Math.min(120, impact * 0.6);
+          this.onPlayerHit(impact * 0.2, true);
+          this.notify(`${h.name} の外壁に衝突した`, 1.5);
+        }
+      }
+      this.habitatHit = { habitat: h, contact: hullContact(h.def, ...h.toLocal(body.pos, this._v).toArray()) };
+    }
     // ガス巨星の深い所では気圧でつぶされる
     if (!this.destroyed && this.frame && this.frame.gas && this.altitudeSea < 40e3) {
       ship.hull -= 25 * h;
@@ -578,10 +621,12 @@ export class Game {
       const nav = this.swarmNav();
       list.push({ nav, d: this._v.copy(nav.point).sub(this.origin).distanceTo(here) });
     }
+    for (const habitat of this.habitats) list.push({ nav: { type: 'habitat', habitat }, d: habitat.pos.distanceTo(here) });
     list.sort((a, b) => a.d - b.d);
     let i = -1;
     if (this.nav) {
-      i = list.findIndex((e) => e.nav.type === this.nav.type && e.nav.planet === this.nav.planet);
+      i = list.findIndex((e) => e.nav.type === this.nav.type && e.nav.planet === this.nav.planet
+        && e.nav.habitat === this.nav.habitat);
     }
     this.setNav(i + 1 < list.length ? list[i + 1].nav : null);
   }
@@ -592,6 +637,7 @@ export class Game {
     if (nav.type === 'planet') return nav.planet.name;
     if (nav.type === 'star') return `${nav.star.name} 星系`;
     if (nav.type === 'swarm') return 'ダイソン・スウォーム';
+    if (nav.type === 'habitat') return nav.habitat.name;
     return '小惑星帯';
   }
 
@@ -642,8 +688,8 @@ export class Game {
     const at = new THREE.Vector3();
     for (let i = 0; i < 8; i++) {
       at.copy(dir).multiplyScalar(dist);
-      const clear = system.planets.every((p) =>
-        Math.hypot(p.position[0] - at.x, p.position[1] - at.y, p.position[2] - at.z) > p.radius * 20);
+      const clear = [...system.planets, ...(system.habitats || [])].every((p) =>
+        Math.hypot(p.position[0] - at.x, p.position[1] - at.y, p.position[2] - at.z) > Math.max(p.radius * 20, 200e3));
       if (clear) break;
       dist *= 1.2;
     }
@@ -914,6 +960,12 @@ export class Game {
     this.sun.material.color.setRGB(sc[0] * starDim, sc[1] * starDim * (1 - red * 0.5), sc[2] * starDim * (1 - red * 0.8));
     this.sunGlow.material.color.copy(this.sun.material.color);
 
+    // オニール・シリンダー
+    for (const h of this.habitats) {
+      this.toRender(h.pos, h.group.position);
+      h.group.quaternion.copy(this._fqInv).multiply(h.quat);
+    }
+
     // 惑星
     let starFade = 1;
     let airDensity = 0;
@@ -1043,6 +1095,17 @@ export class Game {
       }
     }
 
+    // オニール・シリンダーの目印 (組ごとに1つ。遠くて小さく見えるときだけ)
+    const navHabitat = this.nav && this.nav.type === 'habitat' ? this.nav.habitat : null;
+    for (const h of this.habitats) {
+      if (h.def.spin < 0 || h === navHabitat) continue;
+      const dist = h.group.position.length();
+      if (dist > h.def.length * 3) {
+        const p = this.project(h.group.position);
+        if (p.visible) markers.push({ ...p, name: h.name.replace(/ I$|-A$/, ''), dist: dist - h.radius });
+      }
+    }
+
     // 行き先
     let nav = null;
     if (this.nav) {
@@ -1054,6 +1117,9 @@ export class Game {
       } else if (this.nav.type === 'belt') {
         this.toRender(this.asteroids.center, rel);
         dist = rel.length();
+      } else if (this.nav.type === 'habitat') {
+        this.toRender(this.nav.habitat.pos, rel);
+        dist = rel.length() - this.nav.habitat.radius;
       } else if (this.nav.type === 'swarm') {
         this.toRender(this._v2.copy(this.nav.point).sub(this.origin), rel);
         dist = rel.length();
