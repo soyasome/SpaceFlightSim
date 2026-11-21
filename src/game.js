@@ -736,7 +736,7 @@ export class Game {
     body.getInterpolated(alpha, this._sPos, this._sQuat);
 
     this.boostVisual += ((ship.boosting ? 1 : 0) - this.boostVisual) * (1 - Math.exp(-dt * 4));
-    this.rig.update(dt, this._sPos, this._sQuat, body.vel, this.input.look, this.boostVisual);
+    this.rig.update(dt, this._sPos, this._sQuat, body.vel, this.input.look, this.boostVisual, ship.driving);
 
     // カメラが地面にもぐらないようにする
     const cam = this.rig.pos;
