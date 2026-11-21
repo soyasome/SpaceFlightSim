@@ -47,9 +47,16 @@ export function lagrangePoint(position, deg) {
  * @param names [1本目の名前, 2本目の名前]
  * @param center 組の中心 (星系座標, m)
  * @returns 2本の円筒の定義の配列。
- *   { key, name, position, axis, side, radius, length, hull, spin: ±1, pair: { center, gap } }
+ *   { key, name, position, axis, side, radius, length, hull, spin: ±1, pair: { center, gap }, seed }
  *   axis: 円筒の軸 (恒星の方を向く単位ベクトル)、side: ローカル X 軸 (もう1本の方)
  */
+/** 文字列から乱数の種を作る (円筒ごとの地形に使う)。 */
+function seedOf(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return h >>> 0;
+}
+
 export function makeHabitatPair(key, names, center) {
   const axis = norm([-center[0], -center[1], -center[2]]); // 恒星の方
   // 2本を並べる向き: 軸と恒星系の上 (Y) の両方に直交する向き (= 公転の向き)
@@ -68,6 +75,7 @@ export function makeHabitatPair(key, names, center) {
     hull: HABITAT.hull,
     spin: k, // 2本は逆向きに回る
     pair: { center, gap: half * 2 },
+    seed: seedOf(`${key}:${i}`), // 中の地形
   }));
 }
 
@@ -97,14 +105,19 @@ export function hullContact(def, x, y, z) {
 // 中の物理は回らない座標系で計算する (設計書のシンプル版)。重力は軸から外向きに g · r / R。
 // 地面は円筒の内側の面 (半径 R)。入港口の筒の中では、筒の壁 (半径 portRadius) が地面になる。
 
-/** 高さ y の所の地面の、軸からの距離 (m)。 */
-export function groundRadius(def, y) {
-  return y >= -def.length / 2 ? def.radius : HABITAT.portRadius;
+/**
+ * 中の点 (x,y,z) の真下の地面の、軸からの距離 (m)。
+ * @param terrain 中の地形 (habitatTerrain.js の makeInteriorTerrain)。省くと平らな地面
+ */
+export function groundRadius(def, x, y, z, terrain = null) {
+  if (y < -def.length / 2) return HABITAT.portRadius; // 入港口の筒の中は筒の壁
+  if (!terrain) return def.radius;
+  return def.radius - terrain.ground(Math.atan2(x, z), y);
 }
 
 /** 中の点 (x,y,z) の、地面からの高さ (m)。下は軸から外向き。 */
-export function interiorHeight(def, x, y, z) {
-  return groundRadius(def, y) - Math.hypot(x, z);
+export function interiorHeight(def, x, y, z, terrain = null) {
+  return groundRadius(def, x, y, z, terrain) - Math.hypot(x, z);
 }
 
 /** 中の点での重力加速度 (軸から外向き) の大きさ (m/s²)。 */

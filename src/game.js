@@ -1001,6 +1001,11 @@ export class Game {
       h.group.quaternion.copy(this._fqInv).multiply(h.quat);
       // 中は、その円筒の中にいるときと、入港口に近づいたとき (筒の奥に中が見える) だけ描く
       h.interior.visible = h === this.frame || (!this.frame && h.nearPort(cam)); // 宇宙ではカメラの位置 = 世界座標
+      if (h.interior.visible) {
+        // カメラの円筒ローカル座標 (中にいるときはカメラの位置がそのまま、外では世界座標から直す)
+        const camLocal = h === this.frame ? this._v.copy(cam) : h.toLocal(cam, this._v);
+        h.updateInterior(camLocal, h.group.quaternion);
+      }
     }
 
     // 惑星
@@ -1047,8 +1052,8 @@ export class Game {
     // 居住地の中では、機体は向かいの窓から差し込む鏡の光に照らされる (座標系の向き = 描画の向き)
     if (this.frame && this.frame.lightDirAt) {
       this.frame.lightDirAt(this._sPos, this.sunLight.position);
-      this.sunLight.intensity = 2.4;
-      this.ambient.intensity = 0.7;
+      this.sunLight.intensity = 2.4 * this.frame.day;
+      this.ambient.intensity = 0.12 + 0.58 * this.frame.day;
     }
 
     // 塵は速すぎると点滅して見えるので、高速では消す

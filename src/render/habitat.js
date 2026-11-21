@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import {
   HABITAT, interiorHeight, interiorGravity, interiorAir, inPort, inInterior, capContact, hullContact,
 } from '../universe/habitat.js';
+import { makeInteriorTerrain } from '../universe/habitatTerrain.js';
+import { InteriorTerrain, InteriorProps, INTERIOR_LIGHT_GLSL } from './habitatInterior.js';
+
+/** 中の1日の長さ (秒)。鏡を開いて昼、閉じて夜にする */
+export const DAY_LENGTH = 24 * 60;
 
 // オニール・シリンダーの外観と中、それに中にいるときの座標系の窓口。
 // 円筒ローカル座標 (Y = 軸、+Y が恒星の側) で組み立てる。
@@ -32,55 +37,25 @@ const INTERIOR_VERT = /* glsl */ `
     #include <logdepthbuf_vertex>
   }`;
 
-// 中の地面 (陸の帯と蓋)。光は向かいの窓から、真上より少し恒星の側から差し込む
+// 中から見た両端の蓋: 同心円の段々。光と霧は地形と同じ
 const INTERIOR_FRAG = /* glsl */ `
   #include <common>
   #include <logdepthbuf_pars_fragment>
-  uniform float uDay;
+  ${INTERIOR_LIGHT_GLSL}
   varying vec3 vLocal;
   varying vec3 vRel;
   float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   void main() {
     #include <logdepthbuf_fragment>
     float r = length(vLocal.xz);
-    bool cap = abs(vLocal.y) > ${(HABITAT.length / 2 - 1).toFixed(1)};
-    // 面の法線 (中向き) と、光の向き
-    vec3 N = cap ? vec3(0.0, -sign(vLocal.y), 0.0) : -vec3(vLocal.x, 0.0, vLocal.z) / max(r, 1.0);
-    vec3 up = r > 1.0 ? -vec3(vLocal.x, 0.0, vLocal.z) / r : vec3(1.0, 0.0, 0.0);
-    vec3 L = normalize(up * 0.87 + vec3(0.0, 0.5, 0.0));
-
-    vec3 albedo;
-    if (cap) {
-      // 蓋: 同心円の段々 (段階3 で段々畑の山にする)
-      float band = floor(r / 320.0);
-      float k = h21(vec2(band, sign(vLocal.y)));
-      albedo = mix(vec3(0.24, 0.32, 0.16), vec3(0.42, 0.4, 0.3), k);
-      albedo *= 0.85 + 0.15 * step(0.08, fract(r / 320.0));
-    } else {
-      // 陸の帯: 周方向の距離 s と軸方向の y で区切った畑。ところどころ町、1 km ごとに道
-      float s = atan(vLocal.x, vLocal.z) * ${HABITAT.radius.toFixed(1)};
-      vec2 q = vec2(s, vLocal.y);
-      vec2 cell = floor(q / 240.0);
-      float k = h21(cell);
-      albedo = k < 0.35 ? vec3(0.13, 0.25, 0.08) : k < 0.6 ? vec3(0.22, 0.3, 0.1)
-             : k < 0.78 ? vec3(0.42, 0.38, 0.18) : k < 0.9 ? vec3(0.3, 0.24, 0.14) : vec3(0.36, 0.36, 0.35);
-      float town = step(0.86, h21(floor(q / 1500.0) + 7.3));
-      albedo = mix(albedo, vec3(0.4, 0.39, 0.37) * (0.8 + 0.3 * k), town);
-      vec2 f = abs(fract(q / 1100.0) - 0.5) * 1100.0; // 道までの距離 (m)
-      float w = max(fwidth(q.x), fwidth(q.y));
-      float road = 1.0 - smoothstep(6.0, 6.0 + w * 1.5, min(f.x, f.y));
-      road *= 1.0 - smoothstep(30.0, 80.0, w); // 遠くでは消す
-      albedo = mix(albedo, vec3(0.2), road * 0.8);
-      // 窓の帯との境 (帯の中心から ±30°) は土手。dθ: 帯の中心からの角度
-      float dth = abs(mod(atan(vLocal.x, vLocal.z) + PI / 3.0, 2.0 * PI / 3.0) - PI / 3.0);
-      albedo = mix(albedo, vec3(0.3, 0.26, 0.2), smoothstep(PI / 6.0 - 0.012, PI / 6.0 - 0.004, dth));
-    }
-    float ndl = max(dot(N, L), 0.0);
-    vec3 col = albedo * (vec3(1.0, 0.96, 0.88) * 1.4 * ndl * uDay + vec3(0.22, 0.26, 0.32) * (0.25 + 0.75 * uDay));
-    // 霧: 遠くほど空の色にかすむ (8 km 先の向かいの陸は薄く、32 km 先の端はほとんど見えない)
-    float d = length(vRel);
-    vec3 fog = vec3(0.45, 0.55, 0.68) * (0.15 + 0.85 * uDay);
-    col = mix(col, fog, 1.0 - exp(-d / 20000.0));
+    vec3 N = vec3(0.0, -sign(vLocal.y), 0.0);
+    vec3 L = interiorLight(vLocal);
+    float band = floor(r / 320.0);
+    float k = h21(vec2(band, sign(vLocal.y)));
+    vec3 albedo = mix(vec3(0.24, 0.32, 0.16), vec3(0.42, 0.4, 0.3), k);
+    albedo *= 0.85 + 0.15 * step(0.08, fract(r / 320.0));
+    vec3 col = albedo * (sunColor() * max(dot(N, L), 0.0) + skyAmbient() * 1.5);
+    col = applyFog(col, length(vRel));
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -90,7 +65,7 @@ const INTERIOR_FRAG = /* glsl */ `
 const GLASS_FRAG = /* glsl */ `
   #include <common>
   #include <logdepthbuf_pars_fragment>
-  uniform float uDay;
+  ${INTERIOR_LIGHT_GLSL}
   varying vec3 vLocal;
   varying vec3 vRel;
   void main() {
@@ -103,14 +78,15 @@ const GLASS_FRAG = /* glsl */ `
     frame *= 1.0 - smoothstep(0.08, 0.3, max(w.x, w.y)); // 遠くでは桟を消す
     float d = length(vRel);
     float fogK = 1.0 - exp(-d / 20000.0);
-    vec3 fog = vec3(0.45, 0.55, 0.68) * (0.15 + 0.85 * uDay);
-    vec3 col = mix(vec3(0.05, 0.06, 0.07), fog, fogK);
+    vec3 col = mix(vec3(0.05, 0.06, 0.07), fogColor(), fogK);
     float a = clamp(frame * 0.5 + 0.05 + fogK * 0.85, 0.0, 1.0);
     gl_FragColor = vec4(col, a);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }`;
 const _p = new THREE.Vector3();
+const _qm = new THREE.Quaternion();
+const _X = new THREE.Vector3(1, 0, 0);
 
 // 金属らしさは控えめにする (環境マップがないので、金属の度合いが高いと何も映らず黒くなる)
 const metal = (color, roughness = 0.6) => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.2 });
@@ -140,12 +116,16 @@ export class HabitatView {
     this.gas = false;
     this.safe = true; // 安全地帯 (敵を呼べない)
     this.atmosphere = null;
+    this.terrain = makeInteriorTerrain(def); // 中の地形 (当たり判定と描画で共通)
 
     this.group = new THREE.Group(); // 位置と向きは game が毎フレーム置く
     this.spin = new THREE.Group(); // 見た目の回転
     this.group.add(this.spin);
     this.materials = [];
     this.geometries = [];
+    this.mirrors = [];
+    this.elev = 1;
+    this.day = 1;
     this._build();
     this.interior = new THREE.Group(); // 中 (回らない)。近くにいるときだけ描く
     this.group.add(this.interior);
@@ -245,7 +225,7 @@ export class HabitatView {
       const out = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
       m.position.set(out.x * (R + 60), -H, out.z * (R + 60));
       m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), out);
-      m.rotateX(MIRROR_ANGLE); // 上 (恒星側) の端を外へ
+      this.mirrors.push({ mesh: m, base: m.quaternion.clone() }); // 開きは updateDay で決める (上 = 恒星側の端を外へ倒す)
     }
 
     // --- 影の側: 入港口の筒 (回らない)。外側と、中を通る内側の壁 ---
@@ -299,27 +279,27 @@ export class HabitatView {
   _buildInterior() {
     const R = this.def.radius, L = this.def.length, H = L / 2;
     const seg = Math.PI / 3;
-    const uniforms = { uDay: { value: 1 } };
-    // 陸の帯と蓋: 畑・町・道の模様、鏡の光、遠くほど青くかすむ霧
-    const ground = this._mat(new THREE.ShaderMaterial({
+    // 昼と夜 (中のすべての面で共有する)
+    this.dayUniforms = { uDay: { value: 1 }, uElev: { value: 1 } };
+    const uniforms = this.dayUniforms;
+    // 陸の帯: 地形のチャンクと、木と家
+    this.terrainView = new InteriorTerrain(this.def, this.terrain, uniforms, this.interior);
+    this.props = new InteriorProps(this.def, this.terrain, uniforms, this.interior);
+    // 蓋 (中から見える面)。影の側は入港口の穴があく
+    const cap = this._mat(new THREE.ShaderMaterial({
       uniforms,
       side: THREE.BackSide,
       vertexShader: INTERIOR_VERT,
       fragmentShader: INTERIOR_FRAG,
     }));
-    for (let k = 0; k < 6; k += 2) {
-      const geo = new THREE.CylinderGeometry(R, R, L, 48, 32, true, k * seg - seg / 2, seg);
-      this._mesh(geo, ground, this.interior);
-    }
-    // 蓋 (中から見える面)。影の側は入港口の穴があく
     const sun = new THREE.CircleGeometry(R, 96);
     sun.rotateX(-Math.PI / 2); // 表を外 (+Y) に向ける。BackSide で描くので中から見える
     sun.translate(0, H, 0);
-    this._mesh(sun, ground, this.interior);
+    this._mesh(sun, cap, this.interior);
     const shade = new THREE.RingGeometry(HABITAT.portRadius, R, 96, 1);
     shade.rotateX(Math.PI / 2); // 表を外 (-Y) に向ける
     shade.translate(0, -H, 0);
-    this._mesh(shade, ground, this.interior);
+    this._mesh(shade, cap, this.interior);
     // 窓: 薄いガラスと桟。外の星空と鏡が透けて見える
     const glass = this._mat(new THREE.ShaderMaterial({
       uniforms,
@@ -335,10 +315,37 @@ export class HabitatView {
     }
   }
 
+  /**
+   * 中を描く準備 (中が見えているときに毎フレーム呼ぶ)。
+   * @param camLocal 円筒ローカル座標でのカメラ
+   * @param renderQuat 円筒ローカル → 描画座標の向き (group の向き)
+   */
+  updateInterior(camLocal, renderQuat) {
+    this.terrainView.update(camLocal);
+    this.props.update(camLocal);
+    this.terrainView.setRotation(renderQuat);
+  }
+
+  /**
+   * 鏡による昼と夜。時刻 t (秒) から、太陽の高さに当たる値 elev (-1..1) と昼の明るさ day (0..1) を決め、
+   * 鏡の開きを変える (昼は 30° 開き、夜は窓に重なるまで閉じる)。ゲームの開始は朝。
+   */
+  updateDay(t) {
+    const phase = (t / DAY_LENGTH + 0.3) % 1;
+    this.elev = Math.sin(2 * Math.PI * (phase - 0.25));
+    const x = Math.min(1, Math.max(0, (this.elev + 0.08) / 0.28));
+    this.day = x * x * (3 - 2 * x);
+    this.dayUniforms.uDay.value = this.day;
+    this.dayUniforms.uElev.value = this.elev;
+    const open = MIRROR_ANGLE * (0.04 + 0.96 * this.day);
+    for (const m of this.mirrors) m.mesh.quaternion.copy(m.base).multiply(_qm.setFromAxisAngle(_X, open));
+  }
+
   /** 時刻 t (秒) の見た目の回転。中にいる間は止める。 */
   updateRotation(t) {
     if (!this.frozen) this.angle = this._a0 + this.spinRate * (t - this._t0);
     this.spin.rotation.y = this.angle;
+    this.updateDay(t);
   }
 
   /** 中に入った: 回転を止め、陸・窓・鏡の並びを中の陸の帯にそろえる (いちばん近い 120° の倍数へ)。 */
@@ -383,7 +390,7 @@ export class HabitatView {
   }
 
   heightAbove(p) {
-    return interiorHeight(this.def, p.x, p.y, p.z);
+    return interiorHeight(this.def, p.x, p.y, p.z, this.terrain);
   }
 
   roughHeightAbove(p) {
@@ -410,7 +417,8 @@ export class HabitatView {
     const r = Math.hypot(p.x, p.z);
     const x = r > 1e-6 ? p.x / r : 1, z = r > 1e-6 ? p.z / r : 0;
     const y = Math.min(H, Math.max(-H, p.y));
-    return out.set(x * (this.def.radius - alt), y, z * (this.def.radius - alt));
+    const g = this.def.radius - this.terrain.ground(Math.atan2(x, z), y) - alt;
+    return out.set(x * g, y, z * g);
   }
 
   /** 両端の蓋との当たり (機体の中心を蓋から margin 離す)。 */
@@ -418,10 +426,13 @@ export class HabitatView {
     return capContact(this.def, p.x, p.y, p.z, margin);
   }
 
-  /** 中の点 p に差し込む鏡の光の向き (光の来る方, 円筒ローカル座標)。向かいの窓から、恒星の側へ傾いて入る。 */
+  /**
+   * 中の点 p に差し込む鏡の光の向き (光の来る方, 円筒ローカル座標)。向かいの窓から、恒星の側へ傾いて入る。
+   * 鏡の開きが小さい (朝夕) ほど低い角度から差す。シェーダーの interiorLight (habitatInterior.js) と同じ式
+   */
   lightDirAt(p, out) {
-    this.upAt(p, out).multiplyScalar(0.87);
-    out.y += 0.5;
+    this.upAt(p, out).multiplyScalar(0.25 + 0.65 * Math.max(this.elev, 0));
+    out.y += 0.6;
     return out.normalize();
   }
 
@@ -440,5 +451,7 @@ export class HabitatView {
   dispose() {
     for (const g of this.geometries) g.dispose();
     for (const m of this.materials) m.dispose();
+    this.terrainView.dispose();
+    this.props.dispose();
   }
 }
