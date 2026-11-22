@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "spaceflightsim",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["C:\\MyDevelop\\ClaudeCodeMySpace\\SpaceFlightSim\\serve.py"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server@14.1.1", ".", "-p", "5173", "-a", "127.0.0.1", "-c-1", "-s"],
       "port": 5173
     }
   ]
