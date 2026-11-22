@@ -4,11 +4,26 @@ Webブラウザで動く宇宙フライトシミュレーター。ビルド不�
 
 ## 起動
 
+プロジェクトのフォルダで、次のどちらかを実行する。
+
+Python がある場合:
+
 ```
 python serve.py
 ```
 
+Node.js がある場合 (Python のない Windows など):
+
+```
+npx --yes http-server@14.1.1 . -p 5173 -a 127.0.0.1 -c-1 -s
+```
+
+`-a 127.0.0.1` はこの PC からだけ開けるようにする、`-c-1` はキャッシュを切って編集をすぐ反映させる、`-s` はアクセスの記録を出さない指定。
+Claude Code のアプリから起動するときも、こちらを使う (`.claude/launch.json`)。
+
 ブラウザで http://localhost:5173/ を開く。Three.js を CDN から読み込むためネット接続が必要。
+
+操作方法と画面の見方は [操作マニュアル](docs/manual.md)、規則と数値の詳細は [仕様書](docs/spec.md) にある。
 
 単体テスト: http://localhost:5173/tests.html
 

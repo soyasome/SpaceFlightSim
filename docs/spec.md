@@ -66,7 +66,9 @@ STARWAKE はブラウザで動く宇宙フライトシミュレーター。6自�
 
 ### 2.4 外部とのつながり
 - Three.js `0.170.0` を CDN から読む。ネット接続が必要。
-- 開発用サーバー `serve.py` (ポート 5173)。`.js` を必ず `text/javascript` で返し、キャッシュを無効にする (`serve.py:3-6`)。
+- 開発用サーバーは2通り。どちらもポート 5173 で、キャッシュを無効にする。
+  - `serve.py` (Python)。`.js` を必ず `text/javascript` で返す (`serve.py:3-6`)。
+  - `npx --yes http-server@14.1.1 . -p 5173 -a 127.0.0.1 -c-1 -s` (Node.js)。アプリのプレビューはこちら (`.claude/launch.json`)。
 - 保存するのは設定だけ (11章)。宇宙は毎回同じ手順で作り直すので保存しない。
 
 ---
@@ -598,7 +600,7 @@ HUD は2枚の canvas (`#view` に 3D、`#hud` に 2D) で描く。戦闘の表�
 ## 13. テスト
 
 ### 13.1 動かし方
-- `python serve.py` の後、http://localhost:5173/tests.html を開く。ブラウザの中で動く自作のランナー (`tests/harness.js`)。
+- 開発用サーバー (2.4節) を立てた後、http://localhost:5173/tests.html を開く。ブラウザの中で動く自作のランナー (`tests/harness.js`)。
 - `test(name, fn)` / `assert(cond, msg)` / `near(actual, expected, tol, label)` を使う。結果はページと `window.testResults` (`{ total, failed }`) に出る。
 - 1つのファイルだけ動かす仕組みはない。絞りたいときは `tests.html` の `await import(...)` を一時的に減らす。
 - 新しいファイルは `tests/mN.test.js` として作り、`tests.html` に `await import` を1行足す。

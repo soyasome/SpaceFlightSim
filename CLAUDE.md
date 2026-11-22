@@ -9,11 +9,14 @@ STARWAKE — ブラウザで動く宇宙フライトシミュレーター。素�
 ## コマンド
 
 ```
-python serve.py            # http://localhost:5173/ (引数かPORT環境変数でポート変更)
+npx --yes http-server@14.1.1 . -p 5173 -a 127.0.0.1 -c-1 -s   # http://localhost:5173/
+python serve.py                                                # Python がある環境ではこちらでもよい
 ```
 
+- この開発機には Python がない (`python` は Microsoft Store の仮のファイルで、実行すると終了コード 9009)。
+  アプリのプレビュー (`.claude/launch.json`) も npx の http-server で起動する。
 - `serve.py` は .js を必ず `text/javascript` で返し、キャッシュを無効にする。Windows では `python -m http.server` だと
-  モジュールの MIME 型で失敗することがあるので、こちらを使う。Three.js を CDN から読むのでネット接続が必要。
+  モジュールの MIME 型で失敗することがあるので、Python で立てるときはこちらを使う。Three.js を CDN から読むのでネット接続が必要。
 - 単体テスト: http://localhost:5173/tests.html を開く。ブラウザの中で動く自作ランナー (`tests/harness.js` の
   `test` / `assert` / `near`)。結果はページと `window.testResults` (`{ total, failed }`) に出る。
   - 1つのファイルだけ動かす仕組みはない。絞りたいときは `tests.html` の `await import(...)` を一時的に減らす。
