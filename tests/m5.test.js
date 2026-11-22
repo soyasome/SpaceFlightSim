@@ -139,9 +139,9 @@ test('星系: 出発地は太陽系に似せてある (8つの惑星が本物と
   assert(byName.IUPPITER.gas.spot, '木星の大赤斑');
 });
 
-test('巡航: 倍率は距離とともに途切れなく増え、近くでは今までと同じ', () => {
+test('巡航: 倍率は距離とともに途切れなく増え、近くでは距離に比例する', () => {
   near(cruiseScale(0), CRUISE.min, 1e-9, '下限');
-  near(cruiseScale(300e3), 100, 1e-9, '高度300km (距離÷3000)');
+  near(cruiseScale(300e3), 300e3 / CRUISE.nearDiv, 1e-9, '高度300km (距離÷nearDiv)');
   const d0 = CRUISE.farFrom;
   assert(Math.abs(cruiseScale(d0 * 1.000001) - cruiseScale(d0)) < 0.01, '切り替わりで段差がある');
   let prev = 0;
@@ -169,13 +169,13 @@ function travelTime(distance, boost = false) {
   return t;
 }
 
-test('巡航: 惑星間は約2分、恒星間は約3.5分で飛べる (ブーストでその半分以下)', () => {
+test('巡航: 惑星間は約1分、恒星間は約2分で飛べる (ブーストでその半分以下)', () => {
   const planet = travelTime(0.5 * AU);
   const star = travelTime(5 * LY);
-  assert(planet > 80 && planet < 160, `惑星間 ${planet.toFixed(0)} 秒`);
-  assert(star > 150 && star < 270, `恒星間 ${star.toFixed(0)} 秒`);
+  assert(planet > 40 && planet < 90, `惑星間 ${planet.toFixed(0)} 秒`);
+  assert(star > 80 && star < 150, `恒星間 ${star.toFixed(0)} 秒`);
   assert(travelTime(0.5 * AU, true) < planet * 0.5, 'ブーストで短くならない');
-  assert(travelTime(5 * LY, true) < 110, `恒星間 (ブースト) ${travelTime(5 * LY, true).toFixed(0)} 秒`);
+  assert(travelTime(5 * LY, true) < star * 0.5, `恒星間 (ブースト) ${travelTime(5 * LY, true).toFixed(0)} 秒`);
 });
 
 test('地形: 種類ごとに、海・乾いた地面・光る溶岩が正しく塗り分けられる', () => {
