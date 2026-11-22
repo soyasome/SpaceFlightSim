@@ -14,10 +14,10 @@ import { Settings } from './core/settings.js';
 import { Sound } from './audio/sound.js';
 import { Planet } from './planet/planet.js';
 import { HOME_STAR, nearestStar, LY, AU, SUN_RADIUS } from './universe/galaxy.js';
-import { generateSystem } from './universe/system.js';
+import { generateSystem, insideParentFrame } from './universe/system.js';
 import { cruiseScale } from './flight/cruise.js';
 import { NearStars } from './render/nearStars.js';
-import { enterFrame, leaveFrame } from './physics/frame.js';
+import { enterFrame, leaveFrame, fictitiousAccel } from './physics/frame.js';
 import { Combat } from './combat/combat.js';
 import { SwarmView } from './render/swarm.js';
 import { nearestPanel, HIT_RADIUS } from './universe/swarm.js';
@@ -229,7 +229,8 @@ export class Game {
     });
 
     // 出発地の星系から始める
-    this.origin.set(...generateSystem(HOME_STAR).start);
+    this.scale = this.settings.planetScale; // 惑星の大きさ ('game' | 'real')。星系を作るときに渡す
+    this.origin.set(...this.generateSystem(HOME_STAR).start);
     this.loadSystem(HOME_STAR);
 
     window.addEventListener('resize', () => this.resize());
@@ -286,7 +287,7 @@ export class Game {
     // 巡航モード: いちばん近い天体から遠いほど速く飛べる (速度則は src/flight/cruise.js)
     env.speedScale = cruiseScale(this.cruiseDist);
 
-    this.envAt(body.pos, env);
+    this.envAt(body.pos, env, body.vel);
     env.altitude = this.frame ? this.altitude : Infinity;
     // 接地の直後は脚のばねで少し跳ねるので、3本そろって接地してからしばらくは「地上」とみなす
     if (this.ground.gearContacts === 3) this.groundTimer = 0.6;
@@ -334,11 +335,14 @@ export class Game {
 
   /**
    * 位置 pos (フレーム座標) での重力と空気を env に入れる。自機にも敵機にも使う。
+   * vel (フレーム座標での速度) を渡すと、実寸の惑星の回る座標系ではコリオリ力も重力に含める
+   * (遠心力は vel がなくても含める)。見かけの力は重力と同じく、操縦席では感じない。
    */
-  envAt(pos, env) {
+  envAt(pos, env, vel = null) {
     const frame = this.frame;
     if (frame) {
       frame.gravityAt(pos, env.gravity);
+      if (frame.fictitious) fictitiousAccel(frame.omega, pos, vel, env.gravity);
       env.rho = frame.airDensityAt(pos);
       // 高度 約32km から 18km にかけて、航空機としての操縦に切り替わる
       // (それより上は空気が薄すぎて、翼では機体を支えられない)
@@ -382,6 +386,19 @@ export class Game {
       this.altitudeSea = frame.seaLevelAt(body.pos);
       this.cruiseDist = this.altitude;
       this.verticalSpeed = body.vel.dot(frame.upAt(body.pos, this._v));
+      // 実寸では衛星が親の座標系の中にあることがある (IO、PHOBOS)。衛星は動かないので、本当の入れ子にはせず、
+      // 世界座標を経由して衛星の座標系に乗り換える。衛星から出ると宇宙に戻り、次のステップで親の座標系に入り直す
+      if (frame.moons && frame.moons.length) {
+        const world = this._v.copy(body.pos).applyQuaternion(frame.quat).add(frame.pos);
+        for (const moon of frame.moons) {
+          this.cruiseDist = Math.min(this.cruiseDist, Math.max(0, moon.surfaceDistance(world)));
+          if (moon.entersAt(world)) {
+            this.setFrame(moon);
+            this._updateFrame(); // 新しい座標系で高度などを計算し直す
+            return;
+          }
+        }
+      }
     } else {
       this.verticalSpeed = 0;
       let nearest = Infinity;
@@ -392,7 +409,8 @@ export class Game {
           nearest = d;
           this.nearPlanet = planet;
         }
-        if (planet.entersAt(body.pos)) enter = planet;
+        // 衛星が親の座標系の中にあるときは、両方に入れる所がある。小さい方 (衛星) を選ぶ
+        if (planet.entersAt(body.pos) && (!enter || planet.radius < enter.radius)) enter = planet;
       }
       this.altitude = this.altitudeSea = nearest;
       // 巡航の速さは、惑星だけでなく恒星の表面までの距離でも抑える
@@ -436,11 +454,17 @@ export class Game {
     this.habitatHit = null;
     this.frame = null;
     this.star = star;
-    this.system = generateSystem(star);
+    this.system = this.generateSystem(star);
     const swarm = this.system.swarm;
     // スウォームの外側の惑星には、パネルにさえぎられた残りの光しか届かない
     const shade = (def) => (swarm && Math.hypot(...def.position) > swarm.radius ? 1 - 0.8 * swarm.coverage : 1);
     this.planets = this.system.planets.map((def) => new Planet(def, 22 * star.lum * shade(def)));
+    // 親の座標系の中にある衛星 (座標系を乗り換えるときに調べる)
+    for (const p of this.planets) p.moons = [];
+    for (const q of this.planets) {
+      const parent = this.planets[q.def.parent];
+      if (parent && insideParentFrame(q.def, parent.def)) parent.moons.push(q);
+    }
     if (swarm) {
       this.swarm = new SwarmView(swarm, star.color);
       this.scene.add(this.swarm.group);
@@ -710,7 +734,7 @@ export class Game {
     if (dir.lengthSq() < 1e-12) dir.set(1, 0, 0);
     dir.normalize();
     // 惑星のすぐそばに出ないよう、必要なら距離を伸ばす
-    const system = generateSystem(star);
+    const system = this.generateSystem(star);
     let dist = 1.2 * AU * Math.sqrt(star.lum);
     const at = new THREE.Vector3();
     for (let i = 0; i < 8; i++) {
@@ -736,6 +760,45 @@ export class Game {
     this.jump = { star, t: 0, phase: 'arrive' };
     this.sound.explosion(0.4);
     this.notify(`${star.name} 星系に到着した`);
+  }
+
+  /** 今の惑星の大きさの設定で星系を作る。 */
+  generateSystem(star) {
+    return generateSystem(star, { scale: this.scale });
+  }
+
+  /**
+   * 惑星の大きさを変える。変わったときは出発地からやり直す
+   * (星系を作り直すと天体の位置と大きさが変わり、機体が今いる場所の意味がなくなるため)。
+   */
+  setScale(scale) {
+    if (scale === this.scale) return;
+    this.scale = scale;
+    this.restart();
+    this.notify(`惑星の大きさを「${scale === 'real' ? '実寸' : 'ゲーム用'}」にした — 出発地からやり直す`, 3);
+  }
+
+  /** 出発地 (SOL の開始位置) から、ゲームを始めたときと同じ状態でやり直す。 */
+  restart() {
+    const ship = this.ship;
+    const b = ship.body;
+    this.setFrame(null);
+    this.combat.clearAll();
+    this.jump = null;
+    this.nav = null;
+    this.galPos.splice(0, 3, ...HOME_STAR.pos);
+    this.origin.set(...this.generateSystem(HOME_STAR).start);
+    b.teleport(new THREE.Vector3());
+    b.vel.set(0, 0, 0);
+    b.angVel.set(0, 0, 0);
+    b.quat.identity();
+    b.prevQuat.copy(b.quat);
+    this.destroyed = false;
+    ship.restore();
+    ship.stopCruise();
+    this.input.throttle = 0;
+    this.rig._snap = true;
+    this.loadSystem(HOME_STAR);
   }
 
   /** 機体の属する座標系を切り替える (planet = null で宇宙)。見た目は連続する。 */

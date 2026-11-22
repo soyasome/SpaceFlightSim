@@ -562,7 +562,7 @@ export class Combat {
       const e = this.enemies[i];
       const ship = e.ship;
       const b = ship.body;
-      game.envAt(b.pos, e.env);
+      game.envAt(b.pos, e.env, b.vel);
       e.gunTimer -= h;
       e.missileTimer -= h;
       e.underFire -= h;

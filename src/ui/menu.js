@@ -45,10 +45,13 @@ export class Menu {
       name.textContent = d.label;
       row.appendChild(name);
 
-      const input = document.createElement('input');
+      const input = document.createElement(d.type === 'select' ? 'select' : 'input');
       const value = document.createElement('span');
       value.className = 'value';
-      if (d.type === 'range') {
+      if (d.type === 'select') {
+        for (const o of d.options) input.appendChild(new Option(o.label, o.value));
+        input.addEventListener('change', () => this.settings.set(d.key, input.value));
+      } else if (d.type === 'range') {
         input.type = 'range';
         input.min = d.min;
         input.max = d.max;
@@ -65,7 +68,7 @@ export class Menu {
         });
       }
       row.appendChild(input);
-      row.appendChild(value);
+      if (d.type !== 'select') row.appendChild(value); // 選択式は選んだ文字が欄に出るので、値の表示は要らない
       root.appendChild(row);
       if (d.hint) {
         const hint = document.createElement('div');
@@ -82,7 +85,9 @@ export class Menu {
   refresh() {
     for (const { input, value, def } of Object.values(this.inputs)) {
       const v = this.settings[def.key];
-      if (def.type === 'range') {
+      if (def.type === 'select') {
+        input.value = v;
+      } else if (def.type === 'range') {
         input.value = v;
         value.textContent = def.format(v);
       } else {
@@ -117,6 +122,7 @@ export class Menu {
     this.game.paused = false;
     this.game.input.enabled = true;
     this.overlay.classList.add('hidden');
+    this.game.setScale(this.settings.planetScale); // 惑星の大きさを変えていたら、出発地からやり直す
     this.game.input.lock();
   }
 }

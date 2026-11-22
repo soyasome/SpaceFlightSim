@@ -19,6 +19,9 @@ export const SETTING_DEFS = [
     hint: 'OFF にすると敵が現れず、自由に飛べる' },
   { key: 'volume', label: '音量', type: 'range', min: 0, max: 1, step: 0.05, def: 0.6,
     format: (v) => `${Math.round(v * 100)}%` },
+  { key: 'planetScale', label: '惑星の大きさ', type: 'select', def: 'game',
+    options: [{ value: 'game', label: 'ゲーム用 (約 1/16)' }, { value: 'real', label: '実寸' }],
+    hint: 'ゲーム用は惑星と衛星を約 1/16 に縮めてある。実寸は本物の大きさ・衛星までの距離・自転。変えると、メニューを閉じたときに出発地からやり直す' },
 ];
 
 /** 設定値。ブラウザの localStorage に保存され、次回も引き継がれる。 */
@@ -28,7 +31,9 @@ export class Settings {
     try {
       const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
       for (const d of SETTING_DEFS) {
-        if (typeof saved[d.key] === typeof d.def) this[d.key] = saved[d.key];
+        if (typeof saved[d.key] !== typeof d.def) continue;
+        if (d.options && !d.options.some((o) => o.value === saved[d.key])) continue; // 今はない選択肢
+        this[d.key] = saved[d.key];
       }
     } catch {
       // 保存領域が使えない環境では既定値のまま動かす

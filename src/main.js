@@ -88,7 +88,7 @@ window.debug = {
   /** 今の星系の天体の一覧。 */
   system() {
     return {
-      star: `${game.star.name} (${game.star.cls})`,
+      star: `${game.star.name} (${game.star.cls})`, scale: game.scale,
       bodies: game.planets.map((p, i) => `${i}: ${p.name} [${p.type}] R=${Math.round(p.radius / 1000)}km`),
       belt: !!game.system.belt, zones: game.combat.zones.length,
     };

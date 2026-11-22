@@ -1,4 +1,5 @@
 import { Perlin } from './noise.js';
+import { makeGasColor } from './gasBands.js';
 
 const sat = (x) => Math.min(1, Math.max(0, x));
 /** GLSL の smoothstep と同じ。a > b でも使える (向きが逆になる)。 */
@@ -55,7 +56,11 @@ const CLIFFS = {
  * 惑星の地形を表す関数を作る。メインスレッド (接地判定) と Worker (メッシュ生成) の
  * 両方で同じ定義から作るので、見た目と当たり判定が一致する。
  *
- * def = { seed, radius, terrain? }
+ * def = { seed, radius, terrain?, detailScale? }
+ *   detailScale  細かい模様の周波数に掛ける倍率 (省くと 1)。実寸の惑星 (半径がゲーム用の 16 倍) では 16 にする。
+ *                ノイズは単位球の上で引くので、そのままでは半径に比例して模様が引き伸ばされる。
+ *                大陸・山脈の分布・湿り気のような大きな模様は球に合わせて広げ、尾根・丘・細かい起伏・渓谷・台地・
+ *                色むら・街は周波数をこの倍率だけ上げて、m 単位の大きさを保つ (docs/design-real-scale.md の3章)
  * terrain = { type, land, cAmp, mAmp, hAmp, tint }
  *   type  'terran' 海洋 | 'desert' 砂漠 | 'ice' 氷 | 'lava' 溶岩 | 'rock' 岩石 (大気なし) | 'city' 都市
  *   land  大きいほど陸 (高地) が増える。標高 0 以下は平らな「低地」になり、
@@ -66,7 +71,10 @@ const CLIFFS = {
  *   canyons, mesas  渓谷・台地の倍率 (省くと 1。0 でなし。設定は種類ごとに CLIFFS)
  */
 export function makeTerrain(def) {
+  if (def.gas) return makeGasTerrain(def);
   const R = def.radius;
+  const S = def.detailScale ?? 1; // 細かい模様の周波数の倍率
+  const F_VARY = 900 * S; // 地表の色の細かいむら (ゲーム用の大きさで波長 約 450 m)
   const n = new Perlin(def.seed);
   const T = { ...DEFAULT_TERRAIN, ...(def.terrain || {}) };
   const type = T.type;
@@ -137,7 +145,8 @@ export function makeTerrain(def) {
   // --- クレーター ---
   // 空間を格子に区切り、球面の近くにある区画ごとに乱数でクレーターを1つ置く。
   // 区画の大きさを変えて何層も重ねることで、大小さまざまなクレーターになる。
-  const CRATER_LAYERS = 8;
+  // 最も大きい層は球に合わせて広げ (実寸では大きな盆地になる)、層を足して最も小さいクレーターの大きさ (m) を保つ。
+  const CRATER_LAYERS = 8 + Math.max(0, Math.round(Math.log(S) / Math.log(2.6)));
   const CRATER_F0 = 4; // 最も大きい層の格子の細かさ (区画の一辺 = 半径 / これ)
   const CRATER_STEP = 2.6;
   const craterAmount = T.craters ?? CRATER_DEFAULT[type] ?? 0;
@@ -278,20 +287,21 @@ export function makeTerrain(def) {
     const t = 0.6 * (0.5 - C.cover); // ノイズがこれを超える割合がおよそ cover
     const region = smooth(t - 0.1, t + 0.1, fbm(x * 1.3 + 41.7, y * 1.3 - 12.3, z * 1.3 + 6.1, 2));
     if (region < 0.001) return 0;
-    // 渓谷を蛇行させる
-    const W = 0.06;
-    const px = x + W * fbm(x * 3 + 7.7, y * 3 + 1.4, z * 3 - 9.2, 2);
-    const py = y + W * fbm(x * 3 - 3.3, y * 3 + 8.8, z * 3 + 2.6, 2);
-    const pz = z + W * fbm(x * 3 + 5.1, y * 3 - 6.4, z * 3 + 13.9, 2);
+    // 渓谷を蛇行させる (うねりの大きさも m 単位で保つ)
+    const W = 0.06 / S, f3 = 3 * S;
+    const px = x + W * fbm(x * f3 + 7.7, y * f3 + 1.4, z * f3 - 9.2, 2);
+    const py = y + W * fbm(x * f3 - 3.3, y * f3 + 8.8, z * f3 + 2.6, 2);
+    const pz = z + W * fbm(x * f3 + 5.1, y * f3 - 6.4, z * f3 + 13.9, 2);
     // 場所ごとに深さと幅を変える
-    const v1 = 0.5 + 0.5 * n.noise(x * 9 + 2.2, y * 9 + 17.5, z * 9 - 4.4);
-    const v2 = 0.5 + 0.5 * n.noise(x * 11 - 8.1, y * 11 + 3.9, z * 11 + 12.7);
+    const f9 = 9 * S, f11 = 11 * S;
+    const v1 = 0.5 + 0.5 * n.noise(x * f9 + 2.2, y * f9 + 17.5, z * f9 - 4.4);
+    const v2 = 0.5 + 0.5 * n.noise(x * f11 - 8.1, y * f11 + 3.9, z * f11 + 12.7);
     const depth = C.depth * (0.55 + 0.7 * v1);
     const floor = C.floor * (0.5 + 0.9 * v2);
     const wall = C.wall * (0.7 + 0.6 * v1);
     // 本流と、その半分ほどの深さの支流。重なった所は深い方を取る
-    const main = canyonNet(px + 3.7, py - 1.9, pz + 8.3, x, y, z, C.freq, depth, floor, wall, C.steps, C.riser, minWL);
-    const side = canyonNet(px - 6.1, py + 4.4, pz - 2.8, x, y, z, C.freq * 2.6, depth * 0.5, floor * 0.4, wall * 0.6,
+    const main = canyonNet(px + 3.7, py - 1.9, pz + 8.3, x, y, z, C.freq * S, depth, floor, wall, C.steps, C.riser, minWL);
+    const side = canyonNet(px - 6.1, py + 4.4, pz - 2.8, x, y, z, C.freq * 2.6 * S, depth * 0.5, floor * 0.4, wall * 0.6,
       Math.max(1, C.steps - 1), C.riser, minWL);
     return Math.max(main, side) * region;
   }
@@ -302,7 +312,7 @@ export function makeTerrain(def) {
     const t = 0.6 * (0.5 - M.cover);
     const region = smooth(t - 0.1, t + 0.1, fbm(x * 1.7 - 23.4, y * 1.7 + 9.6, z * 1.7 + 31.2, 2));
     if (region < 0.001) return 0;
-    const f = M.freq;
+    const f = M.freq * S;
     fbmD(x * f + 17.3, y * f - 5.5, z * f + 2.9, 3, _fd);
     const w = Math.max(M.edge, minWL); // 崖の幅 2w は頂点4つぶん以上 (渓谷の段と同じ理由)
     let sum = 0;
@@ -335,20 +345,21 @@ export function makeTerrain(def) {
     const m1 = fbm(X * 3.1 - 7.3, Y * 3.1 + 2.9, Z * 3.1 + 0.7, 3);
     const mMask = smooth(0.02, 0.4, land) * smooth(-0.25, 0.25, m1);
     if (mMask > 0.001) {
-      // 尾根の向きにも細かいうねりを足す
-      const w2 = 0.03;
-      const rx = X + w2 * fbm(x * 7 + 31.3, y * 7 - 2.6, z * 7 + 14.9, 2);
-      const ry = Y + w2 * fbm(x * 7 - 19.1, y * 7 + 6.2, z * 7 - 27.4, 2);
-      const rz = Z + w2 * fbm(x * 7 + 3.8, y * 7 + 24.5, z * 7 + 8.1, 2);
-      h += mMask * ridged(rx * 9 + 1.9, ry * 9 - 4.2, rz * 9 + 8.8, oct(9, minWL, 14), x, y, z) * T.mAmp;
+      // 尾根の向きにも細かいうねりを足す。尾根とうねりは m 単位の大きさを保つ
+      const w2 = 0.03 / S, f7 = 7 * S, f9 = 9 * S;
+      const rx = X + w2 * fbm(x * f7 + 31.3, y * f7 - 2.6, z * f7 + 14.9, 2);
+      const ry = Y + w2 * fbm(x * f7 - 19.1, y * f7 + 6.2, z * f7 - 27.4, 2);
+      const rz = Z + w2 * fbm(x * f7 + 3.8, y * f7 + 24.5, z * f7 + 8.1, 2);
+      h += mMask * ridged(rx * f9 + 1.9, ry * f9 - 4.2, rz * f9 + 8.8, oct(f9, minWL, 14), x, y, z) * T.mAmp;
     }
 
     // 丘陵と細かい起伏 (海岸付近では弱める)
     const lowland = smooth(-0.1, 0.15, land);
     if (lowland > 0.001) {
-      h += fbmEroded(x * 45 + 11, y * 45 + 23, z * 45 - 5, oct(45, minWL, 10), x, y, z) * T.hAmp * lowland * (0.4 + mMask);
+      const f45 = 45 * S, f2800 = 2800 * S;
+      h += fbmEroded(x * f45 + 11, y * f45 + 23, z * f45 - 5, oct(f45, minWL, 10), x, y, z) * T.hAmp * lowland * (0.4 + mMask);
       if (minWL < 150) {
-        h += fbm(x * 2800 - 3, y * 2800 + 8, z * 2800 + 1, oct(2800, minWL, 8)) * 9 * lowland * (0.25 + mMask);
+        h += fbm(x * f2800 - 3, y * f2800 + 8, z * f2800 + 1, oct(f2800, minWL, 8)) * 9 * lowland * (0.25 + mMask);
       }
     }
 
@@ -389,8 +400,9 @@ export function makeTerrain(def) {
    */
   function urban(h, x, y, z) {
     if (type !== 'city' || h <= 1) return 0;
-    const district = fbm(x * 6 + 21.1, y * 6 - 7.7, z * 6 + 3.9, 3); // 地区ごとの濃さ (数十 km)
-    const core = fbm(x * 22 - 4.2, y * 22 + 9.3, z * 22 + 12.6, 2); // 都心 (数 km)
+    const f6 = 6 * S, f22 = 22 * S;
+    const district = fbm(x * f6 + 21.1, y * f6 - 7.7, z * f6 + 3.9, 3); // 地区ごとの濃さ (数十 km)
+    const core = fbm(x * f22 - 4.2, y * f22 + 9.3, z * f22 + 12.6, 2); // 都心 (数 km)
     const u = 0.5 + district * 0.7 + core * 0.45;
     return sat(u) * smooth(1, 20, h); // 波打ち際には建てない
   }
@@ -410,7 +422,7 @@ export function makeTerrain(def) {
   function colorTerran(out, h, slope, x, y, z) {
     const lat = Math.abs(y); // 自転軸は惑星ローカルの Y
     const moist = moisture(x, y, z);
-    const vary = n.noise(x * 900 + 0.5, y * 900 + 0.5, z * 900 + 0.5) * 0.5;
+    const vary = n.noise(x * F_VARY + 0.5, y * F_VARY + 0.5, z * F_VARY + 0.5) * 0.5;
 
     if (h <= 0) {
       if (lat > 0.93 + moist * 0.04) { // 極の海氷
@@ -465,7 +477,7 @@ export function makeTerrain(def) {
       return;
     }
     const u = urban(h, x, y, z);
-    const vary = n.noise(x * 900 + 0.5, y * 900 + 0.5, z * 900 + 0.5) * 0.5;
+    const vary = n.noise(x * F_VARY + 0.5, y * F_VARY + 0.5, z * F_VARY + 0.5) * 0.5;
     const k = 1 + vary * 0.4;
     // 公園 → 郊外 (明るいコンクリート) → 都心 (暗いアスファルトと屋上)
     let r = 0.08, g = 0.17, b = 0.055;
@@ -485,7 +497,7 @@ export function makeTerrain(def) {
   function colorDry(out, h, slope, x, y, z) {
     const lat = Math.abs(y);
     const patch = fbm(x * 4 + 9.1, y * 4 - 3.3, z * 4 + 6.6, 4); // 大きな色むら
-    const vary = n.noise(x * 900 + 0.5, y * 900 + 0.5, z * 900 + 0.5) * 0.5;
+    const vary = n.noise(x * F_VARY + 0.5, y * F_VARY + 0.5, z * F_VARY + 0.5) * 0.5;
     const k = 1 + vary * 0.3;
     const p = sat(patch * 1.4 + 0.5);
     const steep = smooth(0.9, 0.7, slope);
@@ -513,7 +525,7 @@ export function makeTerrain(def) {
       }
     } else if (type === 'lava') {
       if (h <= 0) { // 溶岩の海。冷えて固まった黒い皮が浮いている
-        const crust = smooth(-0.1, 0.25, n.noise(x * 260 + 3.3, y * 260 - 1.1, z * 260 + 7.7) + patch * 0.4);
+        const crust = smooth(-0.1, 0.25, n.noise(x * (260 * S) + 3.3, y * (260 * S) - 1.1, z * (260 * S) + 7.7) + patch * 0.4);
         r = lerp(0.85, 0.14, crust); g = lerp(0.22, 0.05, crust); b = lerp(0.03, 0.04, crust);
         glow = 1 - crust * 0.85;
       } else {
@@ -554,6 +566,24 @@ export function makeTerrain(def) {
   return {
     radius: R, type, seed: def.seed, height, color, forest, warmth, urban,
     /** 生のノイズ (およそ -1..1)。岩の散らばり方などに使う。 */
+    noise: (x, y, z) => n.noise(x, y, z),
+  };
+}
+
+/**
+ * ガス巨星の「地形」。降りられる地面はなく、標高はどこでも 0 (雲の頂き)。色は緯度ごとの縞 (gasBands.js)。
+ * 岩の惑星と同じ LOD のチャンクで描くので、近づいても球が多角形に見えない。
+ */
+function makeGasTerrain(def) {
+  const n = new Perlin(def.seed);
+  const gasColor = makeGasColor(def);
+  return {
+    radius: def.radius, type: 'gas', seed: def.seed,
+    height: () => 0,
+    color: (out, h, slope, x, y, z) => gasColor(out, x, y, z),
+    forest: () => 0,
+    warmth: () => 1,
+    urban: () => 0,
     noise: (x, y, z) => n.noise(x, y, z),
   };
 }

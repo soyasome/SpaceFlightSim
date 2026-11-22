@@ -92,6 +92,15 @@ canvas {
 .setting .value { text-align: right; color: #c4d6e6; font-variant-numeric: tabular-nums; }
 .setting input[type="range"] { width: 100%; accent-color: #7fd0ff; }
 .setting input[type="checkbox"] { width: 18px; height: 18px; accent-color: #7fd0ff; justify-self: start; }
+.setting select {
+  grid-column: 2 / 4;
+  padding: 4px 6px;
+  font: inherit;
+  color: #c4d6e6;
+  background: #0b1e30;
+  border: 1px solid #2b6ea8;
+  border-radius: 3px;
+}
 .hint { margin: -4px 0 6px; font-size: 12px; color: #6f93b5; }
 .panel button.minor {
   width: auto;

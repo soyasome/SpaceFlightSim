@@ -1,5 +1,5 @@
 import { starsNear, LY } from '../universe/galaxy.js';
-import { generateSystem, TYPE_LABEL } from '../universe/system.js';
+import { TYPE_LABEL } from '../universe/system.js';
 import { formatDistance } from './hud.js';
 
 const RANGE = 25; // 星図に載せる範囲 (光年)
@@ -141,7 +141,7 @@ export class StarMap {
     for (const { star, dist } of list.slice(0, 40)) {
       const current = star === game.star;
       const selected = !!nav && nav.type === 'star' && nav.star === star;
-      const sys = generateSystem(star);
+      const sys = game.generateSystem(star);
       const info = `${star.label}・惑星 ${sys.planets.filter((p) => p.parent === null || p.parent === undefined).length}`
         + (sys.swarm ? '・スウォーム' : '') + (sys.planets.some((p) => p.type === 'city') ? '・都市' : '');
       this._row(this.stars, star.name, current ? `${info}・現在地` : info, formatDistance(dist * LY), selected,

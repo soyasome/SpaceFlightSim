@@ -4,6 +4,7 @@ import { faceDir, chunkSize, buildIndices, GRID } from '../terrain/chunkBuilder.
 const SPLIT_K = 1.3; // チャンクの大きさの何倍まで近づいたら細分化するか
 const MERGE_HYSTERESIS = 1.15; // 細分化と統合の境目で行ったり来たりしないための余裕
 const TARGET_SPACING = 1.2; // 最も細かいレベルでの頂点間隔 (m)
+const GAS_SPACING = 200; // ガス巨星の最も細かいレベルでの頂点間隔 (m)
 
 let sharedIndex = null;
 
@@ -102,12 +103,17 @@ export class PlanetLod {
     this.material = material;
     this.group = group;
     this.pool = getPool();
-    // Worker に渡す地形の定義。key は Worker 側で地形関数を使い回すための名前
+    // Worker に渡す地形の定義。key は Worker 側で地形関数を使い回すための名前。
+    // 惑星の大きさの設定を変えると、同じ天体 (同じ def.key) でも半径と細かさが変わるので、key に含める
+    const detailScale = def.detailScale ?? 1;
     this.workerDef = {
-      key: def.key || `${def.seed}:${def.radius}`, seed: def.seed, radius: def.radius, terrain: def.terrain || null,
+      key: `${def.key || def.seed}:${def.radius}:${detailScale}`,
+      seed: def.seed, radius: def.radius, terrain: def.terrain || null, detailScale, gas: def.gas || null,
     };
+    // ガス巨星は雲の頂きの 40 km 上より下へは行けない (気圧でつぶれる) ので、頂点の間隔は 200 m で十分
+    const spacing = def.gas ? GAS_SPACING : TARGET_SPACING;
     this.maxLevel = Math.max(1, Math.round(
-      Math.log2((Math.PI / 2) * def.radius / GRID / TARGET_SPACING)));
+      Math.log2((Math.PI / 2) * def.radius / GRID / spacing)));
     this.roots = [];
     for (let f = 0; f < 6; f++) this.roots.push(new Node(f, 0, 0, 0, def.radius, terrain, this.workerDef));
     this.visibleCount = 0;

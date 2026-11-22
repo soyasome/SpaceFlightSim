@@ -102,6 +102,11 @@ export function makeAtmosphereUniforms(def) {
     // 都市惑星: 頂点色の α (0..0.5) を街の濃さと読み、敷地の格子 (一辺 uLotN 個) に沿って道路と夜の街明かりを描く
     uCity: { value: ((def.terrain && def.terrain.type) || def.type) === 'city' ? 1 : 0 },
     uLotN: { value: 1 },
+    // カメラのいる立方体の面での敷地の座標。CPU で倍精度のまま計算して渡す (planet.js の updateRender)。
+    // 実寸の惑星では敷地の座標が 20 万にもなり、float では 1 m 近くずれて道路がちらつくので、カメラからの差だけをシェーダーで足す
+    uCamLot: { value: new THREE.Vector4(0, 0, -1, 1) }, // xy: 敷地の座標の小数部, z: 面の軸 (0,1,2。-1 = まだない), w: 面の向き (±1)
+    uCamLotInt: { value: new THREE.Vector2() }, // 敷地の座標の整数部を 4096 で割った余り
+    uCamFace: { value: new THREE.Vector3() }, // カメラの惑星ローカル座標の、面の上の2成分 (xy) と面の軸の成分 (z)
   };
 }
 
@@ -151,14 +156,31 @@ vec3 bumpNormal(vec3 N, vec3 p, float h) {
 const CITY_GLSL = /* glsl */ `
 // p: 惑星ローカル座標 (惑星中心が原点)。道路らしさ (0..1) を返し、敷地の番号を id に入れる。
 // 1ピクセルに道路が何本も入るほど遠い所では、道路の面積の割合 (平均) を返す
-float cityStreet(vec3 p, float N, out vec2 id) {
+// 立方体の面の軸 (0 = x, 1 = y, 2 = z) ごとの、面の上の2成分と軸の成分。
+// 成分の向きが city.js の faceDir と逆の面もあるが、格子は折り返しても整数の所が重なるので、道路の位置は一致する
+vec2 faceUV(vec3 v, float axis) { return axis < 0.5 ? v.zy : (axis < 1.5 ? v.xz : v.xy); }
+float faceA(vec3 v, float axis) { return axis < 0.5 ? v.x : (axis < 1.5 ? v.y : v.z); }
+
+// p: 惑星ローカル座標 (粗い), d: カメラから見た惑星ローカルの相対位置 (細かい)
+float cityStreet(vec3 p, vec3 d, float N, out vec2 id) {
   vec3 a = abs(p);
-  vec2 st;
-  if (a.x >= a.y && a.x >= a.z) st = p.zy / a.x;
-  else if (a.y >= a.z) st = p.xz / a.y;
-  else st = p.xy / a.z;
-  vec2 g = (st * 0.5 + 0.5) * N; // 敷地の格子の座標 (整数の所が道路の中心)
-  id = floor(g);
+  float axis = (a.x >= a.y && a.x >= a.z) ? 0.0 : (a.y >= a.z ? 1.0 : 2.0);
+  float pa = faceA(p, axis);
+  vec2 g; // 敷地の格子の座標 (整数の所が道路の中心)
+  if (axis == uCamLot.z && sign(pa) == uCamLot.w) {
+    // カメラと同じ面: 面の上の座標の差 st − st_cam を、カメラからの相対位置 d だけで計算する
+    //   st = uv / |a| なので st − st_cam = (d_uv · a_cam − uv_cam · d_a) / (sign · a_cam · (a_cam + d_a))
+    vec2 du = faceUV(d, axis);
+    float da = faceA(d, axis);
+    float ca = uCamFace.z;
+    vec2 dst = (du * ca - uCamFace.xy * da) / (uCamLot.w * ca * (ca + da));
+    g = uCamLot.xy + dst * 0.5 * N;
+    id = mod(floor(g) + uCamLotInt, 4096.0);
+  } else {
+    vec2 st = faceUV(p, axis) / abs(pa);
+    g = (st * 0.5 + 0.5) * N;
+    id = mod(floor(g), 4096.0);
+  }
   vec2 e = abs(fract(g) - 0.5); // 0 = 敷地の中央, 0.5 = 道路の中央
   float w = max(fwidth(g.x), fwidth(g.y));
   const float half_ = 0.5 - ${(0.18 / 2).toFixed(3)}; // 道路の内側の縁 (city.js の STREET)
@@ -220,6 +242,9 @@ export function createTerrainMaterial(uniforms) {
       uniform float uLava;
       uniform float uCity;
       uniform float uLotN;
+      uniform vec4 uCamLot;
+      uniform vec2 uCamLotInt;
+      uniform vec3 uCamFace;
       uniform vec3 uSkyLight; // 空からの光の色 (大気がなければほぼ黒)
       varying vec3 vRel;
       varying vec3 vNormal;
@@ -245,7 +270,7 @@ export function createTerrainMaterial(uniforms) {
         vec3 pLocal = uPlanetRotInv * (vRel - uPlanetCenter); // 惑星ローカル座標
         if (uCity > 0.5) {
           urb = clamp(vColor.a * 2.0, 0.0, 1.0) * ground;
-          street = cityStreet(pLocal, uLotN, lotId);
+          street = cityStreet(pLocal, uPlanetRotInv * vRel, uLotN, lotId);
         }
 
         // 頂点色とメッシュの法線だけだとのっぺりするので、ノイズで模様と凹凸を足す。

@@ -3,7 +3,6 @@ import { makeTerrain } from '../terrain/terrainFn.js';
 import { PlanetLod } from './planetLod.js';
 import { makeAtmosphereUniforms, createTerrainMaterial, createSkyMaterial, createRingMaterial, TILE, TILE2 } from './atmosphere.js';
 import { Scatter } from './scatter.js';
-import { mulberry32 } from '../math/random.js';
 import { FRAME_ENTER, FRAME_EXIT } from '../universe/system.js';
 import { cityPlan } from './city.js';
 
@@ -11,56 +10,23 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const _q = new THREE.Quaternion();
 const _m4 = new THREE.Matrix4();
 
-/** ガス巨星の見た目: 緯度ごとに色の違う縞を持つ球。地形と同じシェーダーで描く。 */
-function gasGeometry(def) {
-  const geo = new THREE.SphereGeometry(def.radius, 128, 64);
-  const pos = geo.attributes.position;
-  const colors = new Uint8Array(pos.count * 4);
-  const rand = mulberry32(def.seed);
-  const { bands, count } = def.gas;
-  // 縞ごとの色と、境目の位置
-  const stripes = [];
-  for (let i = 0; i <= count; i++) {
-    const c = bands[Math.floor(rand() * bands.length)];
-    const k = (0.8 + rand() * 0.4) * 0.5; // 明るい日差しで白く飛ばないよう、暗めにしておく
-    stripes.push([c[0] * k, c[1] * k, c[2] * k]);
-  }
-  const phase = rand() * 10;
-  // 大きな渦 (木星の大赤斑のようなもの)。spot = { lat, lon (rad), w, h (経度・緯度方向の半径, rad), color }
-  const spot = def.gas.spot;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i) / def.radius, y = pos.getY(i) / def.radius, z = pos.getZ(i) / def.radius;
-    const lon = Math.atan2(z, x);
-    const lat = Math.asin(Math.max(-1, Math.min(1, y)));
-    // 縞を少し波打たせる
-    const wobble = Math.sin(lon * 5 + y * 9 + phase) * 0.012 + Math.sin(lon * 11 - phase) * 0.006;
-    const t = (lat / Math.PI + 0.5 + wobble) * count;
-    const i0 = Math.max(0, Math.min(count - 1, Math.floor(t)));
-    let f = t - i0;
-    f = f * f * (3 - 2 * f);
-    const a = stripes[i0], b = stripes[i0 + 1];
-    let r = a[0] + (b[0] - a[0]) * f, g = a[1] + (b[1] - a[1]) * f, bl = a[2] + (b[2] - a[2]) * f;
-    if (spot) {
-      let dl = lon - spot.lon;
-      dl -= Math.round(dl / (2 * Math.PI)) * 2 * Math.PI;
-      const e = Math.hypot((dl * Math.cos(lat)) / spot.w, (lat - spot.lat) / spot.h);
-      if (e < 1.4) {
-        // 中心ほど濃く、縁は明るい輪で縞から切り離す
-        const core = 1 - Math.min(1, Math.max(0, (e - 0.55) / 0.45));
-        const rim = Math.max(0, 1 - Math.abs(e - 1.05) / 0.25) * 0.35;
-        const k = 0.5;
-        r = r + (spot.color[0] * k - r) * core + rim * 0.25;
-        g = g + (spot.color[1] * k - g) * core + rim * 0.22;
-        bl = bl + (spot.color[2] * k - bl) * core + rim * 0.18;
-      }
-    }
-    colors[i * 4] = Math.round(Math.min(1, r) * 255);
-    colors[i * 4 + 1] = Math.round(Math.min(1, g) * 255);
-    colors[i * 4 + 2] = Math.round(Math.min(1, bl) * 255);
-    colors[i * 4 + 3] = 0;
-  }
-  geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 4, true));
-  return geo;
+/**
+ * カメラのいる立方体の面での敷地の座標を、倍精度で計算してシェーダーに渡す (atmosphere.js の cityStreet)。
+ * シェーダーはここからの差だけを計算するので、実寸の惑星でも道路の線がちらつかない。
+ */
+export function setCamLot(u, c, N) {
+  const ax = Math.abs(c.x), ay = Math.abs(c.y), az = Math.abs(c.z);
+  let axis, s, t, a;
+  if (ax >= ay && ax >= az) { axis = 0; s = c.z; t = c.y; a = c.x; }
+  else if (ay >= az) { axis = 1; s = c.x; t = c.z; a = c.y; }
+  else { axis = 2; s = c.x; t = c.y; a = c.z; }
+  if (a === 0) return; // 惑星の中心 (起こらない)
+  const gx = (s / Math.abs(a) * 0.5 + 0.5) * N, gy = (t / Math.abs(a) * 0.5 + 0.5) * N;
+  const ix = Math.floor(gx), iy = Math.floor(gy);
+  const wrap = (i) => ((i % 4096) + 4096) % 4096;
+  u.uCamLot.value.set(gx - ix, gy - iy, axis, Math.sign(a));
+  u.uCamLotInt.value.set(wrap(ix), wrap(iy));
+  u.uCamFace.value.set(s, t, a);
 }
 
 /**
@@ -88,6 +54,7 @@ export class Planet {
     this.quat = new THREE.Quaternion(); // 世界座標での向き
     this.tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), def.axialTilt);
     this.omega = (2 * Math.PI) / def.rotationPeriod; // 自転の角速度 (rad/s, ローカルY軸まわり)
+    this.fictitious = !!def.fictitious; // ローカル座標で遠心力とコリオリ力を足すか (実寸の惑星。frame.js の注)
 
     // この距離より内側では、機体を惑星ローカル座標で動かす
     this.frameEnter = def.radius * FRAME_ENTER;
@@ -101,21 +68,17 @@ export class Planet {
     if (!this.atmosphere) this.uniforms.uSunI.value = sunIntensity;
     const material = createTerrainMaterial(this.uniforms);
 
+    // ガス巨星も岩の惑星と同じ LOD のチャンクで描く (標高 0 の球に縞の色。terrainFn.js の makeGasTerrain)
+    this.terrain = makeTerrain(def);
+    this.lod = new PlanetLod(def, this.terrain, material, this.group);
     if (this.gas) {
-      this.terrain = { radius: def.radius, type: 'gas', height: () => 0 };
-      this.lod = null;
+      this.city = null;
       this.scatter = null;
-      this.body = new THREE.Mesh(gasGeometry(def), material);
-      this.body.frustumCulled = false;
-      this.group.add(this.body);
     } else {
-      this.terrain = makeTerrain(def);
       // 都市惑星: ビルにも当たる (屋上に着陸できる)
       this.city = this.terrain.type === 'city' ? cityPlan(this.terrain) : null;
       if (this.city) this.uniforms.uLotN.value = this.city.N;
-      this.lod = new PlanetLod(def, this.terrain, material, this.group);
       this.scatter = new Scatter(this.terrain, this.uniforms, this.group); // 岩と木
-      this.body = null;
     }
     this.time = 0;
 
@@ -253,6 +216,7 @@ export class Planet {
     u.uCamTile.value.set(m(camLocal.x, TILE), m(camLocal.y, TILE), m(camLocal.z, TILE));
     u.uCamTile2.value.set(m(camLocal.x, TILE2), m(camLocal.y, TILE2), m(camLocal.z, TILE2));
     u.uTime.value = this.time % 4096; // 波を動かす時刻 (float の精度が落ちないよう折り返す)
+    if (this.city) setCamLot(u, camLocal, this.city.N);
     if (this.lod) this.lod.update(camLocal);
     if (this.scatter) this.scatter.update(camLocal);
   }
@@ -261,10 +225,6 @@ export class Planet {
   dispose() {
     if (this.lod) this.lod.dispose();
     if (this.scatter) this.scatter.dispose();
-    if (this.body) {
-      this.body.geometry.dispose();
-      this.body.material.dispose();
-    }
     if (this.sky) {
       this.sky.geometry.dispose();
       this.sky.material.dispose();

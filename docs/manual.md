@@ -358,6 +358,7 @@
 | 追従カメラの揺れ | 0%〜100% | 40% | 加速や旋回でカメラが遅れて振れる大きさ。0 で機体にぴったり付いてくる |
 | 敵の出現 | ON / OFF | ON | OFF にすると敵が現れず、自由に飛べる |
 | 音量 | 0%〜100% | 60% | 効果音の大きさ |
+| 惑星の大きさ | ゲーム用 / 実寸 | ゲーム用 | ゲーム用は惑星と衛星を約 1/16 に縮めてある。実寸は本物の大きさ・衛星までの距離・自転周期・重力 (10.1)。変えるとメニューを閉じたときに出発地からやり直す |
 
 ---
 
@@ -365,6 +366,9 @@
 
 ### 10.1 出発地 SOL 星系
 太陽系に似せて手で配置した星系。名前はラテン語。軌道半径は本物と同じ天文単位で、大きさは TERRA (半径 400 km) を基準にした比率。
+設定の「惑星の大きさ」を「実寸」にすると、本物の大きさになる (TERRA 半径 6,371 km・自転 23.9 時間、月まで 384,400 km、
+木星 半径 69,911 km・自転 9.9 時間、PHOBOS 半径 11 km)。開始位置から TERRA までは、半径との比がゲーム用と同じ (約 8.4 倍) なので、
+見かけの大きさは変わらない。地表を飛んで一周するのには、ゲーム用の 16 倍の時間がかかる。
 
 - 惑星: MERCURIUS, VENUS, TERRA, MARS, IUPPITER, SATURNUS, URANUS, NEPTUNUS
 - 主な衛星: LUNA (TERRA)、PHOBOS・DEIMOS (MARS)、IO・EUROPA・GANYMEDES・CALLISTO (IUPPITER)、TITAN (SATURNUS)、TRITON (NEPTUNUS)
@@ -394,7 +398,7 @@
 | スロットルの変わる速さ | 毎秒 70% | `src/core/input.js:156` |
 | 仮想スティックが最大まで倒れる距離 | 260 px (感度 ×1) | `src/core/input.js:130` |
 | 仮想スティックの遊び | 6% | `src/core/input.js:158` |
-| 設定項目の範囲と初期値 | 9章の表 | `src/core/settings.js:5-21` (`SETTING_DEFS`) |
+| 設定項目の範囲と初期値 | 9章の表 | `src/core/settings.js:4-25` (`SETTING_DEFS`) |
 
 ### 飛行
 | 項目 | 値 | 出典 |
@@ -453,7 +457,7 @@
 | 敵が気づく距離 | 5 km | `src/combat/ai.js:32` (`detectRange`) |
 | 撃たれたときに気づく仲間の範囲 | 6 km | `src/combat/combat.js:444` |
 | 哨戒隊が現れる距離 (小惑星帯 / 惑星) | 30 / 40 km | `src/combat/combat.js:143`, `:149` |
-| SOL 星系の哨戒隊 | 小惑星帯・TERRA 上空 | `src/universe/system.js:277-279` |
+| SOL 星系の哨戒隊 | 小惑星帯・TERRA 上空 | `src/universe/system.js:282-284` |
 | 敵の最大数 / 引っ込む距離 / 自動で的を選ぶ距離 | 8 機 / 60 km / 10 km | `src/combat/combat.js:10`, `:13`, `:14` |
 | 増援の数と出る場所 | 最大 4 機、3回に1回重戦闘機、5〜7 km 先 | `src/combat/combat.js:357-359`, `:372` |
 | レーダーの半径 | 6 km | `src/ui/hudCombat.js:7` (`RADAR_RANGE`) |
@@ -471,8 +475,8 @@
 |---|---|---|
 | 都市惑星の割合 | 15% | `src/universe/system.js:19` (`CITY_CHANCE`) |
 | ダイソン・スウォームの割合 | 12% | `src/universe/swarm.js:12` (`SWARM_CHANCE`) |
-| TERRA の半径 | 400 km | `src/universe/system.js:188` |
-| INSULA I / II の位置 | TERRA の L5 | `src/universe/system.js:272` |
+| TERRA の半径 | 400 km | `src/universe/system.js:193` |
+| INSULA I / II の位置 | TERRA の L5 | `src/universe/system.js:277` |
 | オニール・シリンダーの半径 / 長さ | 4 / 32 km | `src/universe/habitat.js:11-12` (`HABITAT`) |
 | 入港口の筒の半径 / 長さ | 420 m / 1.4 km | `src/universe/habitat.js:16-17` |
 | 宇宙港の位置 / 半径 | 端から 4.2 km / 320 m | `src/universe/habitatTerrain.js:29` (`SPACEPORT`) |
