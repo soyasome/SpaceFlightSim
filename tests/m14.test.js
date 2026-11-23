@@ -290,7 +290,10 @@ test('実寸の SOL: 地形の起伏と模様の大きさは、天体ごとに�
     const g = game[i];
     near(p.detailScale, p.radius / g.radius, 1e-9, `${p.name}: 細かさの倍率 = 実寸の半径 ÷ ゲーム用の半径`);
     if (p.terrain && g.terrain) {
-      for (const k of ['cAmp', 'mAmp', 'hAmp']) near(p.terrain[k], g.terrain[k], 1e-6, `${p.name}: ${k}`);
+      // 本物の地形のマップを使う天体 (TERRA) は起伏の数値を持たない (高さはマップ。倍率は m15 で確かめる)
+      for (const k of ['cAmp', 'mAmp', 'hAmp']) {
+        if (g.terrain[k] !== undefined) near(p.terrain[k], g.terrain[k], 1e-6, `${p.name}: ${k}`);
+      }
     }
   });
 });

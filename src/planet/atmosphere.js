@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getMap } from '../terrain/maps.js';
 
 /**
  * 大気散乱 (レイリー散乱 + ミー散乱) の共通 GLSL。
@@ -107,7 +108,98 @@ export function makeAtmosphereUniforms(def) {
     uCamLot: { value: new THREE.Vector4(0, 0, -1, 1) }, // xy: 敷地の座標の小数部, z: 面の軸 (0,1,2。-1 = まだない), w: 面の向き (±1)
     uCamLotInt: { value: new THREE.Vector2() }, // 敷地の座標の整数部を 4096 で割った余り
     uCamFace: { value: new THREE.Vector3() }, // カメラの惑星ローカル座標の、面の上の2成分 (xy) と面の軸の成分 (z)
+    ...cloudUniforms(def),
+    ...lightsUniforms(def),
   };
+}
+
+/**
+ * 夜の街明かりのマップ (def.nightLights = マップの名前) を GPU のテクスチャにする。docs/design-earth-moon.md の 4章。
+ * 頂点の色に入れると低空でぼやけた大きな塊になるので、地表のシェーダーで緯度経度から読む。
+ * マップが読み込まれていなければ (読み込めなかったときなど) 街明かりなしで描く。
+ * テクスチャは名前ごとに使い回す (縮尺の切り替えややり直しで作り直さない)。
+ */
+const lightTextures = new Map();
+function lightsUniforms(def) {
+  const map = def.nightLights ? getMap(def.nightLights) : null;
+  if (!map) return {};
+  let tex = lightTextures.get(map.name);
+  if (!tex) {
+    // 値 (画素 × scale + offset、0..1) を 0..255 にする。変換の道具が書く形 (Uint8、scale 1/255) ならそのまま使う
+    const lv = map.levels[0];
+    let data = lv.data;
+    if (!(data instanceof Uint8Array && Math.abs(map.scale * 255 - 1) < 1e-6 && map.offset === 0)) {
+      data = new Uint8Array(lv.data.length);
+      for (let i = 0; i < data.length; i++) {
+        data[i] = Math.round(Math.min(1, Math.max(0, lv.data[i] * map.scale + map.offset)) * 255);
+      }
+    }
+    tex = new THREE.DataTexture(data, lv.w, lv.h, THREE.RedFormat, THREE.UnsignedByteType);
+    tex.wrapS = THREE.RepeatWrapping; // 経度 ±180° でつながる
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.needsUpdate = true;
+    lightTextures.set(map.name, tex);
+  }
+  return { uLights: { value: tex } };
+}
+
+/** 街明かりのマップを持つ天体のマテリアルに付ける #define。 */
+function lightsDefines(uniforms) {
+  return uniforms.uLights ? { NIGHT_LIGHTS: 1 } : {};
+}
+
+/**
+ * 夜の街明かりの GLSL (NIGHT_LIGHTS のときだけ)。q: 惑星ローカル座標の単位ベクトル。
+ * 緯度経度は src/terrain/geo.js と同じ式 (東経が正: λ = atan(−z, x))。マップの 1 行目が北の端。
+ */
+const LIGHTS_GLSL = /* glsl */ `
+uniform sampler2D uLights;
+float nightLightsAt(vec3 q) {
+  vec2 uv = vec2(atan(-q.z, q.x) / 6.2831853 + 0.5, 0.5 - asin(clamp(q.y, -1.0, 1.0)) / 3.1415927);
+  // 経度 ±180° の継ぎ目で、隣のピクセルとの差が 1 周分に跳ぶ (縮小版の選び方が狂って線が出る) のを直す
+  vec2 dx = dFdx(uv), dy = dFdy(uv);
+  dx.x -= floor(dx.x + 0.5);
+  dy.x -= floor(dy.x + 0.5);
+  return textureGrad(uLights, uv, dx, dy).r;
+}
+// 足し込む光。lit: マップの明るさ (0..1)、sunUp: 鉛直と太陽の向きの内積、pl: 惑星に固定された座標 (8192 m 周期)
+vec3 nightLights(float lit, float sunUp, vec3 pl, float dist) {
+  float night = 1.0 - smoothstep(-0.12, 0.06, sunUp);
+  if (night <= 0.0 || lit <= 0.0) return vec3(0.0);
+  // 近づいたら、明かりを街区ほどの細かい点に分ける (一様にぼやけた光に見えないように)
+  // (周期は pl の 8192 m を割り切る数にする。波長 1 km の街のまとまりと 256 m の街区)
+  float near = 1.0 - smoothstep(15000.0, 60000.0, dist);
+  float dots = vnoise(pl * 0.0009765625, 8.0) * 0.55 + vnoise(pl * 0.00390625 + 5.0, 32.0) * 0.45;
+  float k = mix(1.0, smoothstep(0.4, 0.75, dots) * 2.5, near);
+  // 衛星の画像は明るい所が飽和しているので、2 乗して暗い郊外との差を付ける
+  return vec3(1.0, 0.68, 0.36) * lit * lit * k * night * 0.9;
+}
+`;
+
+/**
+ * 雲の層の uniform (def.clouds = { altitude (m), cover (0..1) } のある天体だけ)。
+ * 雲の層は球のメッシュでは作らず、空と地表のシェーダーの中で視線との交点を計算して描く (CLOUD_GLSL)。
+ * 実寸の惑星では、球を多角形で近似したへこみが雲の高さより大きくなるため。docs/design-earth-moon.md の 5章
+ */
+function cloudUniforms(def) {
+  if (!def.clouds) return {};
+  const S = def.detailScale ?? 1;
+  return {
+    uCloudR: { value: def.radius + def.clouds.altitude },
+    uCloudCover: { value: def.clouds.cover ?? 0.55 },
+    // 2 枚の雲の模様を、それぞれ自転軸まわりに回す角度 (cos, sin)。planet.js の updateRender が時刻から決める
+    uCloudRot: { value: new THREE.Vector4(1, 0, 1, 0) },
+    // ノイズのオクターブ数。実寸 (細かさの倍率 S) では足して、いちばん小さな雲の大きさ (m) を保つ
+    uCloudOct: { value: 7 + Math.round(Math.log2(S)) },
+  };
+}
+
+/** 雲を持つ天体のマテリアルに付ける #define。 */
+export function cloudDefines(uniforms) {
+  return uniforms.uCloudR ? { CLOUDS: 1 } : {};
 }
 
 /** カメラ位置を周期 TILE / TILE2 (m) で折り返す。シェーダーの模様を float の精度内で惑星に固定するため。 */
@@ -209,10 +301,104 @@ vec3 cityLights(vec3 p, float urb, float street, vec2 id, float sunUp, float dis
 }
 `;
 
+// 雲の層 (CLOUDS が定義されたマテリアルだけで使う)。ATMOSPHERE_GLSL・NOISE_GLSL・uPlanetRotInv・uSkyLight の後に置く。
+// 雲は半径 uCloudR の薄い球面にあるものとして、視線や太陽光との交点で濃さを求める。
+const CLOUD_GLSL = /* glsl */ `
+uniform float uCloudR;
+uniform float uCloudCover;
+uniform vec4 uCloudRot;
+uniform float uCloudOct;
+// 1 ピクセルが見込む角度 (rad) のおおよその値 (画角 62°・縦 720 ピクセルほど)。遠くの細かい雲を消すのに使う
+#define CLOUD_PIXEL 0.0015
+
+vec3 cloudRotY(vec3 p, vec2 cs) { return vec3(p.x * cs.x + p.z * cs.y, p.y, -p.x * cs.y + p.z * cs.x); }
+
+// 惑星ローカル座標の向き q (単位ベクトル) の雲の濃さ (0..1)。fp: 1 ピクセルが球面上で見込む角度 (rad)。
+// thick には雲の厚み (0..1。縁の薄い所が 0、芯の厚い所が 1) を返す
+float cloudAlpha(vec3 q, float fp, out float thick) {
+  // 大きな模様 (天気の系) と細かい模様を別の速さで回し、形が少しずつ変わるようにする
+  vec3 p1 = cloudRotY(q, uCloudRot.xy);
+  vec3 p2 = cloudRotY(q, uCloudRot.zw);
+  vec3 warp = vec3(vnoise(p1 * 2.0 + 3.1, 8192.0), vnoise(p1 * 2.0 - 7.7, 8192.0), vnoise(p1 * 2.0 + 11.3, 8192.0)) - 0.5;
+  // 値ノイズは格子の向きに沿った筋が出るので、オクターブごとに座標を回して筋を散らす
+  const mat3 ROT = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
+  mat3 R = mat3(1.0);
+  // 細かいオクターブも強めに残し (倍率 0.62)、大きな雲の塊の中にも切れ目と濃淡ができるようにする
+  float f = 4.0, a = 1.0, sum = 0.0, norm = 0.0;
+  for (int i = 0; i < 12; i++) {
+    if (float(i) >= uCloudOct) break;
+    // 1 ピクセルより細かい模様は、ちらつかないよう平均 (0) に置き換える
+    float keep = 1.0 - smoothstep(0.15, 0.4, fp * f);
+    vec3 pp = R * ((i < 2 ? p1 : p2) + warp * 0.2) * f + float(i) * 17.31;
+    sum += a * keep * (vnoise(pp, 8192.0) - 0.5) * 2.0;
+    norm += a;
+    R = ROT * R;
+    f *= 2.03;
+    a *= 0.62;
+  }
+  sum /= norm;
+  // 緯度ごとの雲の量: 赤道 (熱帯収束帯) と中緯度に多く、亜熱帯 (緯度 25° 前後) の砂漠帯に少ない
+  float al = abs(q.y);
+  float band = 0.1 * (1.0 - smoothstep(0.0, 0.2, al))
+             - 0.14 * exp(-pow((al - 0.42) / 0.12, 2.0))
+             + 0.08 * exp(-pow((al - 0.75) / 0.12, 2.0));
+  float v = sum * 0.8 + 0.5 + band;
+  float t = 0.5 + (0.55 - uCloudCover) * 0.45;
+  thick = smoothstep(t, t + 0.3, v);
+  return smoothstep(t - 0.03, t + 0.12, v);
+}
+
+// 雲の点 pc (惑星中心から見た位置、描画座標の向き) の明るさ。fromBelow: 雲の下から見上げている
+vec3 cloudShade(vec3 pc, float thick, bool fromBelow) {
+  vec3 up = normalize(pc);
+  vec2 odL = lightDepth(pc);
+  vec3 sunT = exp(-(uBetaR * odL.x + uBetaM * 1.1 * odL.y)); // 夕方は赤く、夜側は暗く
+  float mu = dot(up, uSunDir);
+  vec3 sun = sunT * uSunI * 0.085 * (0.45 + 0.55 * max(mu, 0.0)) * smoothstep(-0.12, 0.08, mu);
+  vec3 sky = uSkyLight * uSunI * 0.011 * smoothstep(-0.2, 0.3, mu);
+  // 上から見ると厚い所ほど明るく (縁の薄い所は灰色がかる)、下から見上げると厚い所ほど暗い
+  float shade = fromBelow ? mix(0.9, 0.3, thick) : mix(0.55, 1.0, thick);
+  return vec3(0.75) * (sun * shade + sky + vec3(0.0015, 0.002, 0.003));
+}
+
+// カメラから dir 方向の tStart..tEnd の間に雲の層があれば、色 col の手前に重ねる。
+// col はその区間の大気を通った後の色 (= 手前の散乱 + 透過率 × 奥の色)。alpha に雲の濃さを返す
+vec3 cloudOver(vec3 col, vec3 dir, float tStart, float tEnd, out float alpha) {
+  alpha = 0.0;
+  vec3 o = -uPlanetCenter;
+  float c0, c1;
+  if (!raySphere(o, dir, uCloudR, c0, c1)) return col;
+  float tc = c0 > 0.0 ? c0 : c1;
+  if (tc <= 0.0 || tc >= tEnd) return col;
+  vec3 pcw = o + dir * tc;
+  vec3 q = normalize(uPlanetRotInv * pcw);
+  float thick;
+  alpha = cloudAlpha(q, tc * CLOUD_PIXEL / uCloudR, thick);
+  if (alpha < 0.002) return col;
+  // カメラと雲の間の大気
+  vec3 T1 = vec3(1.0), s1 = vec3(0.0);
+  if (tStart < tc) s1 = scatter(dir, tStart, tc, T1);
+  vec3 cloud = s1 + T1 * cloudShade(pcw, thick, dot(o, o) < uCloudR * uCloudR);
+  return mix(col, cloud, alpha);
+}
+
+// 地表の点 pc (惑星中心から見た位置) に落ちる雲の影 (1 = 影なし)。dist: カメラからの距離
+float cloudShadow(vec3 pc, float dist) {
+  if (dot(pc, pc) >= uCloudR * uCloudR) return 1.0;
+  float s0, s1;
+  if (!raySphere(pc, uSunDir, uCloudR, s0, s1) || s1 <= 0.0) return 1.0;
+  vec3 q = normalize(uPlanetRotInv * (pc + uSunDir * s1));
+  float thick;
+  float a = cloudAlpha(q, max(dist, 2000.0) * CLOUD_PIXEL / uCloudR, thick);
+  return 1.0 - a * (0.45 + 0.4 * thick);
+}
+`;
+
 /** 地表のマテリアル。頂点色 + 太陽光 + 大気によるかすみ。 */
 export function createTerrainMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     uniforms,
+    defines: { ...cloudDefines(uniforms), ...lightsDefines(uniforms) },
     side: THREE.DoubleSide,
     vertexShader: /* glsl */ `
       #include <common>
@@ -251,6 +437,12 @@ export function createTerrainMaterial(uniforms) {
       varying vec4 vColor;
       ${NOISE_GLSL}
       ${CITY_GLSL}
+      #ifdef CLOUDS
+      ${CLOUD_GLSL}
+      #endif
+      #ifdef NIGHT_LIGHTS
+      ${LIGHTS_GLSL}
+      #endif
 
       void main() {
         #include <logdepthbuf_fragment>
@@ -315,11 +507,17 @@ export function createTerrainMaterial(uniforms) {
         // 凹凸で傾けた法線が、もとの面の裏側まで照らさないようにする
         ndl *= smoothstep(-0.05, 0.1, dot(normalize(vNormal), uSunDir));
         vec3 light = sunT * uSunI * 0.085 * ndl;
+        #ifdef CLOUDS
+        light *= cloudShadow(pc, dist); // 雲の影
+        #endif
         float day = smoothstep(-0.2, 0.3, dot(up, uSunDir));
         vec3 skyLight = uSkyLight * uSunI * 0.011 * day;
         vec3 col = albedo * (light + skyLight + vec3(0.0015, 0.002, 0.003));
         col += albedo * lava * 1.0; // 溶岩は夜でも光る
         if (uCity > 0.5) col += cityLights(pLocal, urb, street, lotId, dot(up, uSunDir), dist);
+        #ifdef NIGHT_LIGHTS
+        col += nightLights(nightLightsAt(normalize(pLocal)), dot(up, uSunDir), pl2, dist) * ground; // 本物の街明かり
+        #endif
 
         // 水面: さざ波、太陽の反射、浅い角度で映る空、波打ち際の白波
         if (water > 0.5) {
@@ -349,6 +547,10 @@ export function createTerrainMaterial(uniforms) {
           vec3 ins = scatter(dir, tStart, dist, T);
           col = col * T + ins;
         }
+        #ifdef CLOUDS
+        float cloudA;
+        col = cloudOver(col, dir, tStart, dist, cloudA); // カメラと地表の間の雲
+        #endif
 
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
@@ -642,6 +844,7 @@ export function createTreeBillboardMaterial(uniforms, { map, near, far }) {
 export function createSkyMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     uniforms,
+    defines: cloudDefines(uniforms),
     side: THREE.BackSide,
     transparent: true,
     depthWrite: false,
@@ -665,6 +868,12 @@ export function createSkyMaterial(uniforms) {
       #include <common>
       #include <logdepthbuf_pars_fragment>
       ${ATMOSPHERE_GLSL}
+      #ifdef CLOUDS
+      uniform mat3 uPlanetRotInv;
+      uniform vec3 uSkyLight;
+      ${NOISE_GLSL}
+      ${CLOUD_GLSL}
+      #endif
       varying vec3 vRel;
       void main() {
         #include <logdepthbuf_fragment>
@@ -679,7 +888,11 @@ export function createSkyMaterial(uniforms) {
         if (tEnd <= tStart) discard;
         vec3 T;
         vec3 col = scatter(dir, tStart, tEnd, T);
-        gl_FragColor = vec4(col, dot(T, vec3(0.3333)));
+        float cloudA = 0.0;
+        #ifdef CLOUDS
+        col = cloudOver(col, dir, tStart, tEnd, cloudA); // 雲は奥の星や太陽を隠す
+        #endif
+        gl_FragColor = vec4(col, dot(T, vec3(0.3333)) * (1.0 - cloudA));
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,

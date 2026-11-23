@@ -22,7 +22,7 @@ python serve.py                                                # Python があ�
   `test` / `assert` / `near`)。結果はページと `window.testResults` (`{ total, failed }`) に出る。
   - 1つのファイルだけ動かす仕組みはない。絞りたいときは `tests.html` の `await import(...)` を一時的に減らす。
   - 新しいテストファイルは `tests/mN.test.js` として作り、`tests.html` に `await import` を1行足す
-    (足さないと実行されない)。ファイルは機能を足した段階ごと (M1〜M13) に分かれている。
+    (足さないと実行されない)。ファイルは機能を足した段階ごと (M1〜M16。m16 は `assets/maps` の本物のマップを読む) に分かれている。
 - 技術解説ページ: http://localhost:5173/docs/ (`docs/index.html`。図と動かせるデモつき)。
 - 動作確認はブラウザのコンソールの `debug.*` (`src/main.js`) を使う。`debug.goto` / `debug.near` / `debug.jumpTo` /
   `debug.spawn` / `debug.system()` / `debug.state()` など。一覧は README の「デバッグ」。
@@ -57,6 +57,8 @@ python serve.py                                                # Python があ�
 - `src/universe/system.js`: 恒星の種から星系 (惑星・衛星・小惑星帯・哨戒隊・スウォーム・居住地) を決める。
   出発地 `HOME_STAR` (SOL) だけは手で配置してあり、多くのテストがその配置 (TERRA など) を前提にしている。
 - `src/universe/` と `src/terrain/` は **three.js に依存しない** (テストや Worker から使うため)。
+  本物の地形のマップ (`src/terrain/maps.js`) は使う前に読み込んでおく (`makeTerrain` は待たない)。緯度経度の変換は `src/terrain/geo.js` だけを使う
+  (東経が正。符号を間違えると地図が鏡写しになる)。マップの変換の道具は `tools/maps/` (Python)。
   特に `src/terrain/` は Web Worker (`terrainWorker.js`、`src/planet/planetLod.js` の共有 WorkerPool) からも
   読み込むので、外部ライブラリや DOM を使わない。
 

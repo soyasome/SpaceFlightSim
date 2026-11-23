@@ -2,10 +2,45 @@ import { Vector3 } from 'three';
 import { Game } from './game.js';
 import { Menu } from './ui/menu.js';
 import { StarMap } from './ui/starmap.js';
-import { starsNear } from './universe/galaxy.js';
+import { starsNear, HOME_STAR } from './universe/galaxy.js';
+import { generateSystem } from './universe/system.js';
+import { geoToLocal } from './terrain/geo.js';
+import { loadMap, loadMaps, mapNamesOf } from './terrain/maps.js';
 
+/**
+ * 出発地 (SOL) の本物の地形のマップを、ゲームを始める前に読み込む (docs/design-earth-moon.md の 7章)。
+ * 縮尺を変えても使うマップは同じなので、待つのは最初の1回だけ。読み込めなければ false (ノイズの地形で始める)。
+ */
+async function preloadMaps() {
+  const bodies = ['game', 'real'].flatMap((scale) => generateSystem(HOME_STAR, { scale }).planets);
+  const names = bodies.flatMap((p) => mapNamesOf(p.terrain));
+  // 夜の街明かりは見た目だけなので、読めなくても地形は本物のまま始める (街明かりなしで描く。atmosphere.js)
+  const lights = [...new Set(bodies.map((p) => p.nightLights).filter(Boolean))];
+  const lightsDone = Promise.all(lights.map((n) => loadMap(n).catch((err) => {
+    console.error(`夜の街明かりのマップ ${n} を読み込めなかった:`, err);
+  })));
+  if (!names.length) { await lightsDone; return true; }
+  const note = document.createElement('div');
+  note.textContent = '地形データを読み込み中…';
+  note.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:#8cf;'
+    + 'font:14px monospace;letter-spacing:0.1em;z-index:100;pointer-events:none';
+  document.body.appendChild(note);
+  try {
+    await loadMaps(names);
+    await lightsDone;
+    return true;
+  } catch (err) {
+    console.error('地形データを読み込めなかった。ノイズの地形で始める:', err);
+    return false;
+  } finally {
+    note.remove();
+  }
+}
+
+const mapsOk = await preloadMaps();
 const game = new Game(document.getElementById('view'), document.getElementById('hud'));
 game.start();
+if (!mapsOk) game.notify('地形データを読み込めなかった — 地球と月はノイズの地形になる', 6);
 
 const menu = new Menu(game, game.settings);
 const starmap = new StarMap(game);
@@ -18,13 +53,12 @@ window.debug = {
   /**
    * 惑星の上空へ瞬間移動する。
    * @param alt 地面からの高さ (m)
-   * @param lat,lon 緯度・経度 (度)
+   * @param lat,lon 緯度・経度 (度。東経が正)
    * @param pitch 機首の上下 (度, 0 = 水平, 負 = 下向き)
    * @param speed 前進速度 (m/s)。0 ならホバーで静止、0 より大きければ飛行状態
    */
   goto(alt = 1000, lat = 20, lon = 30, pitch = 0, speed = 0, body = null) {
-    const la = (lat * Math.PI) / 180, lo = (lon * Math.PI) / 180;
-    const up = new Vector3(Math.cos(la) * Math.cos(lo), Math.sin(la), Math.cos(la) * Math.sin(lo));
+    const up = new Vector3(...geoToLocal(lat, lon)); // 東経が正 (src/terrain/geo.js)
     game.placeShip(body === null ? game.planet : game.planets[body], up, alt, pitch, speed);
     return this.state();
   },

@@ -244,7 +244,13 @@ STARWAKE はブラウザで動く宇宙フライトシミュレーター。6自�
   この配置は M1〜M4 のテストの前提なので変えない。
 - 惑星: MERCURIUS, VENUS, TERRA, MARS, IUPPITER, SATURNUS, URANUS, NEPTUNUS。主な衛星: LUNA, PHOBOS, DEIMOS, IO, EUROPA,
   GANYMEDES, CALLISTO, TITAN, TRITON。SATURNUS には環 (当たり判定なし)、IUPPITER には大赤斑がある。
-- 哨戒隊: 小惑星帯に RAIDER 2機、TERRA の北緯 20°・東経 30°・高度 5 km に RAIDER 2機と GUNSHIP 1機 (`:277-280`)。
+- 哨戒隊: 小惑星帯に RAIDER 2機、TERRA の北緯 36°・東経 139.7° (関東平野)・高度 5 km に RAIDER 2機と GUNSHIP 1機 (`:277-280`)。
+  緯度経度は `src/terrain/geo.js` で惑星ローカル座標に変える (東経が正。地表が自転で動く向きが東)。
+- TERRA の地形は本物の地球の標高 (`terrain.maps.height = 'earth-height'`、倍率 1)。夜の街明かり (`nightLights: 'earth-lights'`) を持ち、
+  開始時に日本 (東経 138°) が開始地点の方を向くよう `rotationPhase` を決めてある (`phaseToShow`)。
+  LUNA の地形は本物の月の標高と明るさ (`moon-height`・`moon-albedo`、高さの倍率はゲーム用 0.4・実寸 1)。
+- TERRA は雲の層 (`clouds: { altitude: 4000, cover: 0.55 }`) を持つ。LUNA は潮汐ロック (`tidalLock`。自転せず、
+  `axialTilt` と `rotationPhase` で表側 (緯度 0°・経度 0°) を TERRA へ向ける。`faceToward`)。
 - TERRA の L5 にオニール・シリンダー `INSULA I / II` (`:272`)。
 
 ### 5.4 惑星と地形
@@ -259,6 +265,14 @@ STARWAKE はブラウザで動く宇宙フライトシミュレーター。6自�
   - 渓谷と台地の種類ごとの設定は `CLIFFS` (`:34`)。
   - 同じ定義から、メインスレッド (接地) と Worker (メッシュ) の両方で同じ関数を作るので、見た目と当たり判定が一致する。
   - 標高 0 以下は平らな低地になり、種類によって海・乾いた盆地・氷原・溶岩の海として描く。
+  - `terrain.maps` (`{ height?, cover?, albedo? }`) があると、本物の地形のマップ (`src/terrain/maps.js`) を使う。
+    大きな模様をマップの標高 (× `heightScale`) に置き換え、マップの画素の 2 倍より短い波長のノイズだけを足す。
+    海岸 (標高 0〜60 m) では細かい模様を弱め、海底には足さない。渓谷・台地は作らず、マップより大きなクレーターも足さない。
+    `cover` は土地被覆の区分 (IGBP) で海洋惑星の色と木を、`albedo` は岩石天体の明るさを決める。
+    マップは使う前に読み込んでおく (`main.js` が開始前に SOL の分を読む。Worker は自分で読む)。読み込めなかったマップを使う天体は、
+    `usableTerrain` で今のノイズの地形にする (`docs/design-earth-moon.md` の 3章・7章)。
+  - 天体の定義の `nightLights` (マップの名前) があると、地表のシェーダーがそのマップをテクスチャにして、夜側に街明かりを足す
+    (`src/planet/atmosphere.js` の `LIGHTS_GLSL`。近づくと細かい点に分ける)。地形の Worker は読まない。読み込めなければ街明かりなしで描く。
 - **LOD** (`src/planet/planetLod.js`): 立方体の6面を球に投影した「キューブ球」の各面を四分木にし、カメラに近い所ほど細かくする。
   - チャンクの大きさの 1.3 倍まで近づいたら細分化し、統合には 1.15 倍の余裕を持たせる (`:4-5`)。最も細かいレベルの頂点間隔は約 1.2 m (`:6`)。
   - チャンクは 32×32 分割 (`src/terrain/chunkBuilder.js:4`)。境目の隙間はスカートで隠す。
@@ -272,6 +286,9 @@ STARWAKE はブラウザで動く宇宙フライトシミュレーター。6自�
 - **都市惑星の街区** (`src/planet/city.js`): 約 200 m の区画を 4×4 の敷地に分け、敷地ごとのビルを決める (`:11-12`)。
   描画と屋上の当たり判定 (`src/planet/planet.js:161-167`) の両方がこの計画を使う。
 - **大気** (`src/planet/atmosphere.js`): 大気の殻と地表を、レイリー散乱とミー散乱のシェーダーで描く。都市惑星の道路と夜景もここ。
+  - 雲 (`CLOUD_GLSL`、`def.clouds` のある天体だけ #define `CLOUDS`): 半径 `uCloudR` の薄い球面として、視線・太陽光との交点で濃さを求める
+    (メッシュは使わない)。濃さは回る 2 枚のノイズと緯度ごとの量で決め、1 ピクセルより細かい模様は消す。空と地表に重ね、地表には影を落とす。
+    実寸ではオクターブを足して、いちばん小さな雲の大きさ (m) を保つ。
   - 道路の格子の座標は、カメラのいる面での値を CPU で倍精度のまま計算して渡し (`setCamLot`, `src/planet/planet.js`)、
     シェーダーはカメラからの差だけを計算する。実寸の惑星では敷地の座標が 20 万を超え、float のままだと 0.4 m ずれて道路がちらつくため。
 
@@ -599,7 +616,7 @@ HUD は2枚の canvas (`#view` に 3D、`#hud` に 2D) で描く。戦闘の表�
 
 | 関数 | 働き |
 |---|---|
-| `goto(alt=1000, lat=20, lon=30, pitch=0, speed=0, body=null)` | 天体の上空へ瞬間移動。speed 0 はホバーで静止、0 より大きいと飛行状態。body は天体の番号 (省くと今の天体) (`:25`) |
+| `goto(alt=1000, lat=20, lon=30, pitch=0, speed=0, body=null)` | 天体の上空へ瞬間移動 (経度は東経が正)。speed 0 はホバーで静止、0 より大きいと飛行状態。body は天体の番号 (省くと今の天体) (`:25`) |
 | `repair()` | 機体・シールド・弾薬を回復 (`:32`) |
 | `spawn(n=1, type='raider', dist=3000, alerted=true)` | 敵を自機の前方に出す。戻り値は出せた数 (`:42`) |
 | `clearEnemies()` | 敵をすべて消し、哨戒隊も空にする (`:53`) |

@@ -1,5 +1,7 @@
 import { Perlin } from './noise.js';
 import { makeGasColor } from './gasBands.js';
+import { requireMap } from './maps.js';
+import { localToGeoRad } from './geo.js';
 
 const sat = (x) => Math.min(1, Math.max(0, x));
 /** GLSL の smoothstep と同じ。a > b でも使える (向きが逆になる)。 */
@@ -14,6 +16,29 @@ const DEFAULT_TERRAIN = { type: 'terran', land: 0.05, cAmp: 2800, mAmp: 6500, hA
 
 /** クレーターの深さの倍率 (種類ごとの既定値)。大気や水のある天体では風化して浅い。 */
 const CRATER_DEFAULT = { rock: 1, ice: 0.3, desert: 0.35, lava: 0.2, terran: 0, city: 0 };
+
+/**
+ * 土地被覆の区分 (MODIS の IGBP 区分の番号) ごとの地表の色と木の生えやすさ。本物の地球 (TERRA) の色に使う。
+ * 0 (水)・17・255 (分類なし) など表にない番号の陸は、今のノイズで決める色にする。docs/design-earth-moon.md の 3.5
+ */
+const COVER = {
+  1: { color: [0.05, 0.14, 0.05], forest: 1 }, // 常緑針葉樹林
+  2: { color: [0.06, 0.2, 0.05], forest: 1 }, // 常緑広葉樹林 (熱帯の森)
+  3: { color: [0.08, 0.16, 0.06], forest: 0.9 }, // 落葉針葉樹林
+  4: { color: [0.09, 0.22, 0.06], forest: 0.9 }, // 落葉広葉樹林
+  5: { color: [0.08, 0.19, 0.06], forest: 0.9 }, // 混交林
+  6: { color: [0.25, 0.26, 0.12], forest: 0.25 }, // 密な低木地
+  7: { color: [0.45, 0.38, 0.22], forest: 0.05 }, // まばらな低木地
+  8: { color: [0.2, 0.26, 0.09], forest: 0.45 }, // 木の多いサバンナ
+  9: { color: [0.36, 0.34, 0.15], forest: 0.15 }, // サバンナ
+  10: { color: [0.3, 0.33, 0.13], forest: 0.03 }, // 草原
+  11: { color: [0.12, 0.2, 0.1], forest: 0.3 }, // 湿地
+  12: { color: [0.3, 0.32, 0.14], forest: 0.02 }, // 農地
+  13: { color: [0.3, 0.29, 0.27], forest: 0 }, // 都市
+  14: { color: [0.22, 0.28, 0.11], forest: 0.3 }, // 農地と自然のまだら
+  15: { color: [0.85, 0.88, 0.92], forest: 0 }, // 雪と氷
+  16: { color: [0.6, 0.48, 0.3], forest: 0 }, // 裸地・砂漠
+};
 
 /**
  * 渓谷と段丘 (メサ) の種類ごとの設定。
@@ -69,6 +94,10 @@ const CLIFFS = {
  *   tint  色合い [r, g, b] (掛け算)
  *   craters  クレーターの深さの倍率 (省くと種類ごとの既定値。0 でなし)
  *   canyons, mesas  渓谷・台地の倍率 (省くと 1。0 でなし。設定は種類ごとに CLIFFS)
+ *   maps  本物の地形のマップの名前 { height?, cover?, albedo? } (src/terrain/maps.js。先に読み込んでおく)。
+ *         height があると、大きな模様 (大陸・山脈の分布) をマップの標高に置き換え、
+ *         マップの画素より細かい波長のノイズだけを足す。渓谷と台地は作らない。docs/design-earth-moon.md の 3章
+ *   heightScale  マップの標高に掛ける倍率 (省くと 1)
  */
 export function makeTerrain(def) {
   if (def.gas) return makeGasTerrain(def);
@@ -79,15 +108,27 @@ export function makeTerrain(def) {
   const T = { ...DEFAULT_TERRAIN, ...(def.terrain || {}) };
   const type = T.type;
 
+  // 本物の地形のマップ (docs/design-earth-moon.md の 3.3)
+  const MAPS = T.maps || {};
+  const hMap = MAPS.height ? requireMap(MAPS.height) : null;
+  const coverMap = MAPS.cover ? requireMap(MAPS.cover) : null;
+  const albedoMap = MAPS.albedo ? requireMap(MAPS.albedo) : null;
+  const heightScale = T.heightScale ?? 1;
+  // ノイズを足す波長の上限 (m)。これより長い波長はマップにすでにある
+  const CUT = hMap ? 2 * hMap.pixelAngle * R : 0;
+  // 基本周波数 f0・周波数の倍率 lac のノイズで、波長 (R / 周波数) が CUT より短くなる最初のオクターブ
+  const firstOct = (f0, lac) => (hMap ? Math.max(0, Math.ceil(Math.log(R / (f0 * CUT)) / Math.log(lac))) : 0);
+
   // 基本周波数 f0 のノイズを、波長 minWL (m) まで重ねるのに必要なオクターブ数。
   // 遠くの粗いメッシュでは細かい凹凸を計算しないので、生成が軽くなる。
   const oct = (f0, minWL, max) =>
     Math.max(1, Math.min(max, Math.floor(Math.log2(R / (f0 * minWL))) + 1));
 
-  function fbm(x, y, z, octaves) {
+  // start: これより前のオクターブは足さない (マップのある天体で、マップより粗い波長を省くため)
+  function fbm(x, y, z, octaves, start = 0) {
     let a = 1, s = 0;
     for (let i = 0; i < octaves; i++) {
-      s += a * n.noise(x, y, z);
+      if (i >= start) s += a * n.noise(x, y, z);
       x *= 2.03; y *= 2.03; z *= 2.03;
       a *= 0.5;
     }
@@ -104,7 +145,7 @@ export function makeTerrain(def) {
   const SLOPE_DECAY = 0.75; // 細かいオクターブほど「斜面の急さ」への寄与を小さくする
 
   // 尾根が鋭く立つノイズ (0..1)。山脈に使う。(ux,uy,uz) は鉛直方向 (勾配から鉛直成分を除く)。
-  function ridged(x, y, z, octaves, ux, uy, uz) {
+  function ridged(x, y, z, octaves, ux, uy, uz, start = 0) {
     // 尾根の線 (n = 0) をまたぐと勾配の向きが反転するので、ベクトルで足すと
     // そこに段差ができる。向きを捨てて、急さの2乗だけを積む。
     let a = 0.5, s = 0, w = 1, steep = 0, sw = 1;
@@ -113,7 +154,7 @@ export function makeTerrain(def) {
       let v = 1 - Math.abs(_nd[0]);
       v *= v * w;
       w = sat(v * 2);
-      s += (v * a) / (1 + EROSION * steep);
+      if (i >= start) s += (v * a) / (1 + EROSION * steep);
       let gx = _nd[1], gy = _nd[2], gz = _nd[3];
       const r = gx * ux + gy * uy + gz * uz;
       gx -= r * ux; gy -= r * uy; gz -= r * uz;
@@ -126,11 +167,11 @@ export function makeTerrain(def) {
   }
 
   // 侵食風の fbm。丘陵に使う。
-  function fbmEroded(x, y, z, octaves, ux, uy, uz) {
+  function fbmEroded(x, y, z, octaves, ux, uy, uz, start = 0) {
     let a = 1, s = 0, sx = 0, sy = 0, sz = 0, sw = 1;
     for (let i = 0; i < octaves; i++) {
       n.noiseD(x, y, z, _nd);
-      s += (a * _nd[0]) / (1 + EROSION * (sx * sx + sy * sy + sz * sz));
+      if (i >= start) s += (a * _nd[0]) / (1 + EROSION * (sx * sx + sy * sy + sz * sz));
       let gx = _nd[1] * sw, gy = _nd[2] * sw, gz = _nd[3] * sw;
       const r = gx * ux + gy * uy + gz * uz;
       gx -= r * ux; gy -= r * uy; gz -= r * uz;
@@ -166,6 +207,7 @@ export function makeTerrain(def) {
     for (let l = 0; l < CRATER_LAYERS; l++, F *= CRATER_STEP) {
       const cell = R / F; // 区画の一辺 (m)
       if (cell * 0.3 < minWL) break; // この層の最大のクレーターでもメッシュで表せない
+      if (hMap && cell * 0.6 > CUT) continue; // この層の大きなクレーターはマップにすでにある
       const salt = craterSalt + l * 0x632be5ab;
       const px = x * F, py = y * F, pz = z * F;
       const cx = Math.floor(px), cy = Math.floor(py), cz = Math.floor(pz);
@@ -219,8 +261,8 @@ export function makeTerrain(def) {
   // 急な所でも、崖の幅 (= 急さ) を m で指定どおりにできる。
   // 崖の幅は minWL より細くしない。粗いメッシュでは崖がなだらかになるが、形はずれない。
   const CL = CLIFFS[type] || {};
-  const canyonCfg = CL.canyon && (T.canyons ?? 1) > 0 ? { ...CL.canyon, depth: CL.canyon.depth * (T.canyons ?? 1) } : null;
-  const mesaCfg = CL.mesa && (T.mesas ?? 1) > 0 ? { ...CL.mesa, tier: CL.mesa.tier * (T.mesas ?? 1) } : null;
+  const canyonCfg = CL.canyon && !hMap && (T.canyons ?? 1) > 0 ? { ...CL.canyon, depth: CL.canyon.depth * (T.canyons ?? 1) } : null;
+  const mesaCfg = CL.mesa && !hMap && (T.mesas ?? 1) > 0 ? { ...CL.mesa, tier: CL.mesa.tier * (T.mesas ?? 1) } : null;
   const _fd = [0, 0, 0, 0];
 
   /** fbm の値と勾配 (入力座標についての偏微分) を out = [値, ∂x, ∂y, ∂z] に入れる。 */
@@ -329,6 +371,7 @@ export function makeTerrain(def) {
    * minWL: これより短い波長の凹凸は省く。1 を渡すと最も細かい。
    */
   function height(x, y, z, minWL = 1) {
+    if (hMap) return mapHeight(x, y, z, minWL);
     // ドメインワープ: ノイズを引く位置を別のノイズでずらす。
     // 海岸線や山脈が、まっすぐな塊ではなくうねった形になる。
     const W = 0.2;
@@ -383,6 +426,53 @@ export function makeTerrain(def) {
     return h;
   }
 
+  /**
+   * マップのある天体の標高 (m)。マップの標高 × heightScale に、マップの画素より細かい波長のノイズを足す。
+   * 海のある天体では、海岸の近く (マップの標高 0〜60 m) で細かい模様を弱め、海底には足さない
+   * (小さな島や池が散らばらないように)。陸がノイズで深く削られて湖にならないよう、下げる量はもとの高さの 8 割まで。
+   */
+  function mapHeight(x, y, z, minWL) {
+    const geo = localToGeoRad(x, y, z);
+    const base = hMap.cubic(geo.lat, geo.lon, minWL / R) * heightScale;
+    const sea = type === 'terran';
+    const coast = sea ? smooth(0, 60, base) : 1;
+    let detail = 0;
+    if (coast > 0.001) {
+      // 尾根は高い所 (山脈) にだけ足す。月 (岩石天体) には足さない
+      const mMask = sea ? smooth(300, 2500, base) : 0;
+      if (mMask > 0.001) {
+        const f9 = 9 * S;
+        detail += mMask * T.mAmp
+          * ridged(x * f9 + 1.9, y * f9 - 4.2, z * f9 + 8.8, oct(f9, minWL, 14), x, y, z, firstOct(f9, 2.07));
+      }
+      const f45 = 45 * S, f2800 = 2800 * S;
+      detail += fbmEroded(x * f45 + 11, y * f45 + 23, z * f45 - 5, oct(f45, minWL, 10), x, y, z, firstOct(f45, 2.03))
+        * T.hAmp * (0.4 + mMask);
+      if (minWL < 150) {
+        detail += fbm(x * f2800 - 3, y * f2800 + 8, z * f2800 + 1, oct(f2800, minWL, 8), firstOct(f2800, 2.03))
+          * 9 * (0.25 + mMask);
+      }
+      detail *= coast;
+      if (sea && base > 0) detail = Math.max(detail, -0.8 * base);
+    }
+    let h = base + detail;
+    if (craterAmount > 0) h += craters(x, y, z, minWL) * craterAmount;
+    return h;
+  }
+
+  /**
+   * 土地被覆の区分 (COVER の要素)。表にない番号なら null。
+   * 区分の境目が画素の形 (カクカクした段) に見えないよう、読む位置を 1.5 画素ほどノイズでずらす。
+   */
+  function coverAt(x, y, z) {
+    const geo = localToGeoRad(x, y, z);
+    const w = coverMap.pixelAngle * 1.5;
+    const fq = 1 / (coverMap.pixelAngle * 3); // ずらし方の模様の大きさは約 3 画素
+    const dLat = n.noise(x * fq + 7.1, y * fq - 3.7, z * fq + 1.3) * w;
+    const dLon = n.noise(x * fq - 5.3, y * fq + 9.9, z * fq - 2.2) * w / Math.max(Math.cos(geo.lat), 0.05);
+    return COVER[coverMap.nearest(geo.lat + dLat, geo.lon + dLon)] || null;
+  }
+
   /** 湿り気 (およそ -1..1)。色と植生の両方で使う。 */
   function moisture(x, y, z) {
     return fbm(x * 4 + 9.1, y * 4 - 3.3, z * 4 + 6.6, 4);
@@ -414,6 +504,10 @@ export function makeTerrain(def) {
   function forest(h, x, y, z) {
     if (type === 'city') return h < 4 ? 0 : smooth(0.3, 0.1, urban(h, x, y, z)) * smooth(4, 30, h);
     if (type !== 'terran' || h < 4) return 0;
+    if (coverMap) { // 土地被覆の区分で決める (colorTerran の色と揃える)
+      const c = coverAt(x, y, z);
+      if (c) return c.forest * smooth(0.3, 0.45, warmth(h, y)) * smooth(4, 30, h);
+    }
     const m = sat(moisture(x, y, z) * 1.6 + 0.5);
     return smooth(0.42, 0.75, m) * smooth(0.3, 0.45, warmth(h, y)) * smooth(4, 30, h);
   }
@@ -443,20 +537,25 @@ export function makeTerrain(def) {
     }
 
     const temp = warmth(h, y); // 1 = 暖かい
-    const m = sat(moist * 1.6 + 0.5);
-    let r, g, b;
-    if (m < 0.3) { // 砂漠 → 乾いた草地
-      const t = m / 0.3;
-      r = lerp(0.6, 0.36, t); g = lerp(0.48, 0.34, t); b = lerp(0.29, 0.15, t);
-    } else { // 乾いた草地 → 森
-      const t = (m - 0.3) / 0.7;
-      r = lerp(0.36, 0.09, t); g = lerp(0.34, 0.24, t); b = lerp(0.15, 0.06, t);
-    }
     const k = 1 + vary * 0.35;
-    r *= k; g *= k; b *= k;
+    let r, g, b, t;
+    const cover = coverMap ? coverAt(x, y, z) : null;
+    if (cover) { // 本物の土地被覆 (寒さによる荒れ地はすでに区分に入っている)
+      r = cover.color[0] * k; g = cover.color[1] * k; b = cover.color[2] * k;
+    } else {
+      const m = sat(moist * 1.6 + 0.5);
+      if (m < 0.3) { // 砂漠 → 乾いた草地
+        t = m / 0.3;
+        r = lerp(0.6, 0.36, t); g = lerp(0.48, 0.34, t); b = lerp(0.29, 0.15, t);
+      } else { // 乾いた草地 → 森
+        t = (m - 0.3) / 0.7;
+        r = lerp(0.36, 0.09, t); g = lerp(0.34, 0.24, t); b = lerp(0.15, 0.06, t);
+      }
+      r *= k; g *= k; b *= k;
 
-    let t = smooth(0.45, 0.2, temp); // 寒冷地は荒れ地
-    r = lerp(r, 0.33, t); g = lerp(g, 0.31, t); b = lerp(b, 0.25, t);
+      t = smooth(0.45, 0.2, temp); // 寒冷地は荒れ地
+      r = lerp(r, 0.33, t); g = lerp(g, 0.31, t); b = lerp(b, 0.25, t);
+    }
 
     t = smooth(35, 3, h); // 砂浜
     r = lerp(r, 0.7, t); g = lerp(g, 0.64, t); b = lerp(b, 0.47, t);
@@ -534,6 +633,12 @@ export function makeTerrain(def) {
         r = lerp(r, 0.5, t * 0.6); g = lerp(g, 0.14, t * 0.6);
         r = lerp(r, 0.06, steep); g = lerp(g, 0.055, steep); b = lerp(b, 0.055, steep);
       }
+    } else if (albedoMap) { // 明るさのマップのある岩石天体 (本物の月)。暗い海と明るい高地はマップで決める
+      const geo = localToGeoRad(x, y, z);
+      // マップの値は、暗い海が 0.35〜0.45、明るい高地が 0.75 前後 (sRGB の画像の明るさ)。
+      // そのままでは海が目立たないので、0.3〜0.9 を広げて、海と高地の明るさの比を 3 倍ほどにする
+      const v = lerp(0.08, 0.5, sat((albedoMap.linear(geo.lat, geo.lon) - 0.3) / 0.6)) * (1 - 0.2 * steep);
+      r = v; g = v; b = v * 1.02;
     } else { // rock
       if (h <= 0) { // 暗い平原 (月の海)
         r = 0.17; g = 0.17; b = 0.18;

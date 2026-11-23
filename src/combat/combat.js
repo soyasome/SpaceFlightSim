@@ -6,6 +6,7 @@ import { BoltPool, Missile } from './projectiles.js';
 import { Pilot } from './ai.js';
 import { Effects } from './effects.js';
 import { leadPoint, segmentSphere, angleBetween } from './targeting.js';
+import { geoToLocal } from '../terrain/geo.js';
 
 const MAX_ENEMIES = 8;
 const AI_EVERY = 6; // 敵の判断は 6 ステップに1回 (毎秒20回)
@@ -144,12 +145,11 @@ export class Combat {
         zone.sysPos = new THREE.Vector3(...system.belt.position);
       } else {
         const planet = planets[z.planet];
-        const la = z.lat * DEG, lo = z.lon * DEG;
         zone.kind = 'planet';
         zone.radius = 40e3;
         zone.planet = planet;
-        zone.local = new THREE.Vector3(Math.cos(la) * Math.cos(lo), Math.sin(la), Math.cos(la) * Math.sin(lo))
-          .multiplyScalar(planet.radius + z.altitude);
+        // 緯度・経度 (東経が正) → 惑星ローカル座標 (src/terrain/geo.js)
+        zone.local = new THREE.Vector3(...geoToLocal(z.lat, z.lon)).multiplyScalar(planet.radius + z.altitude);
       }
       return zone;
     });

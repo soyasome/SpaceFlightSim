@@ -182,6 +182,28 @@ function customize(body, { terrain, ...rest }) {
   return Object.assign(body, rest);
 }
 
+/**
+ * 潮汐ロック: 天体の表側 (緯度 0°・経度 0°、ローカルの +X) を、星系座標の向き d へいつも向ける。
+ * planet.js の向きは「Z 軸まわりに axialTilt 傾けてから、Y 軸まわりに自転の角度」なので、
+ * +X は (cos φ · cos τ, cos φ · sin τ, −sin φ) へ向く (τ = axialTilt、φ = rotationPhase)。これが d になるよう選ぶ。
+ * 自転はしない (公転しないこのゲームでは、それが潮汐ロック)。docs/design-earth-moon.md の 6章
+ */
+function faceToward(d) {
+  const len = Math.hypot(d[0], d[1], d[2]);
+  const x = d[0] / len, y = d[1] / len, z = d[2] / len;
+  return { tidalLock: true, axialTilt: Math.atan2(y, x), rotationPhase: Math.asin(Math.max(-1, Math.min(1, -z))) };
+}
+
+/**
+ * 時刻 0 で、東経 lonDeg の子午線を星系座標の向き d へ向ける自転の角度 rotationPhase。
+ * 傾き tilt (Z 軸まわり) を戻した座標で d の経度を求め、そこから lonDeg を引く (Y 軸まわりの自転は経度を足すだけなので)。
+ * 開始地点から見える TERRA の地域を選ぶのに使う。docs/design-earth-moon.md の 8章
+ */
+function phaseToShow(d, tilt, lonDeg) {
+  const ux = Math.cos(tilt) * d[0] + Math.sin(tilt) * d[1];
+  return Math.atan2(-d[2], ux) - (lonDeg * Math.PI) / 180;
+}
+
 const NO_AIR = { atmosphere: null, skyLight: [0.02, 0.02, 0.025] };
 // ガス巨星の大気。既定の青い空のままだと縞の色が白くかすむので、惑星の色に合わせて薄く色を付ける
 const gasAir = (betaR) => ({
@@ -230,20 +252,32 @@ function homeSystem(star, real = false) {
     return planets.length - 1;
   };
 
-  // 0: 地球。地形は M2 から変えていない既定のもの (terrain: null)
+  // 0: 地球。seed と半径は M2 から変えていない。地形は本物の地球の標高のマップ
   planets.push({
     key: 'home:0', name: 'TERRA', type: 'terran', seed: 2024, radius: 400e3 * terraK, position: terraPos, parent: null,
     detailScale: terraK, ...(real ? { fictitious: true } : {}),
     rotationPeriod: real ? 86164 : 7200, axialTilt: 0.3, gravity: 9.81,
-    terrain: null,
+    // 開始時に、開始地点の真下 (太陽もほぼ同じ向きで、昼側の真ん中) に日本 (東経 138°) が来るように回しておく
+    rotationPhase: phaseToShow(start.map((v, i) => v - terraPos[i]), 0.3, 138),
+    // 本物の地球の標高・水深 (NOAA ETOPO 2022)。山の高さは今の地形でも本物に近いので、両方の縮尺で 1 倍
+    // (docs/design-earth-moon.md の 3.3・3.4)。色と植生は土地被覆のマップがまだないので、今のノイズの規則のまま
+    terrain: { maps: { height: 'earth-height' }, heightScale: 1 },
     atmosphere: { ...AIR_EARTH, sunIntensity: 22 },
     skyLight: [0.3, 0.42, 0.62],
+    clouds: { altitude: 4000, cover: 0.55 }, // 雲の層 (atmosphere.js の CLOUD_GLSL)
+    nightLights: 'earth-lights', // 夜の街明かり (NASA Black Marble 2016。atmosphere.js の LIGHTS_GLSL)
   });
   // 月: 大気がなく、近いので着陸の練習になる。実寸では同じ向きに 384,400 km
   const lunaDir = [-5.2e6, 1.4e6, -6.4e6];
   const lunaK = real ? 384400e3 / Math.hypot(...lunaDir) : 1;
   add('LUNA', 'rock', 77, [110e3, 1737e3], () => terraPos.map((v, i) => v + lunaDir[i] * lunaK), 0,
-    { ...NO_AIR, gravity: 1.62, terrain: { tint: [1, 1, 1.02] } }, { rotationPeriod: 27.32 * DAY });
+    {
+      ...NO_AIR, gravity: 1.62, ...faceToward(lunaDir.map((v) => -v)),
+      // 本物の月の標高 (NASA LRO LOLA) と明るさ (LROC WAC)。docs/design-earth-moon.md の 3.4・3.6。
+      // 本物の起伏は約 20 km あり、ゲーム縮尺の半径 110 km では大きすぎるので 0.4 倍にする
+      terrain: { tint: [1, 1, 1.02], maps: { height: 'moon-height', albedo: 'moon-albedo' }, heightScale: real ? 1 : 0.4 },
+    },
+    { rotationPeriod: 27.32 * DAY });
 
   // 水星: 灰色の岩の天体
   add('MERCURIUS', 'rock', 311, [152e3, 2440e3], () => orbit(0.39, 40, 0.06), null,
@@ -334,7 +368,8 @@ function homeSystem(star, real = false) {
     belt: { position: [start[0], start[1] - 600, start[2] - 9000], seed: 9 },
     zones: [
       { kind: 'belt', roster: ['raider', 'raider'] },
-      { kind: 'planet', planet: 0, lat: 20, lon: 30, altitude: 5000, roster: ['raider', 'raider', 'gunship'] },
+      // TERRA 上空の哨戒隊: 開始時に見える日本の、関東平野の上空 (北緯 36°・東経 139.7°)
+      { kind: 'planet', planet: 0, lat: 36, lon: 139.7, altitude: 5000, roster: ['raider', 'raider', 'gunship'] },
     ],
   };
 }

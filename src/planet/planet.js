@@ -5,8 +5,10 @@ import { makeAtmosphereUniforms, createTerrainMaterial, createSkyMaterial, creat
 import { Scatter } from './scatter.js';
 import { FRAME_ENTER, FRAME_EXIT } from '../universe/system.js';
 import { cityPlan } from './city.js';
+import { usableTerrain } from '../terrain/maps.js';
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const CLOUD_WIND = [80, -50]; // 雲の大きな模様と細かい模様を流す速さ (m/s)
 const _q = new THREE.Quaternion();
 const _m4 = new THREE.Matrix4();
 
@@ -35,11 +37,13 @@ export function setCamLot(u, c, N) {
  *
  * def (src/universe/system.js が作る):
  *   { key, name, type, seed, radius, position (星系座標), rotationPeriod, axialTilt, gravity,
- *     terrain, atmosphere | null, skyLight, gas?, rings? }
+ *     terrain, atmosphere | null, skyLight, gas?, rings?, tidalLock?, rotationPhase?, clouds? }
  * sunIntensity: 恒星の明るさ (地表と空の明るさに効く)
  */
 export class Planet {
   constructor(def, sunIntensity = 22) {
+    // 本物の地形のマップを読み込めなかった天体は、今のノイズの地形で作る (Worker にもこの定義が渡る)
+    if (def.terrain) def = { ...def, terrain: usableTerrain(def.terrain) };
     this.def = def;
     this.name = def.name;
     this.type = def.type;
@@ -53,7 +57,10 @@ export class Planet {
     this.pos = this.sysPos.clone(); // 世界座標。原点が動くたびに game が計算し直す
     this.quat = new THREE.Quaternion(); // 世界座標での向き
     this.tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), def.axialTilt);
-    this.omega = (2 * Math.PI) / def.rotationPeriod; // 自転の角速度 (rad/s, ローカルY軸まわり)
+    // 自転の角速度 (rad/s, ローカルY軸まわり)。潮汐ロックの天体は、公転しないこのゲームでは自転もしない
+    // (いつも同じ面を親に向ける。docs/design-earth-moon.md の 6章)
+    this.omega = def.tidalLock ? 0 : (2 * Math.PI) / def.rotationPeriod;
+    this.rotationPhase = def.rotationPhase ?? 0; // 時刻 0 での自転の角度 (rad)
     this.fictitious = !!def.fictitious; // ローカル座標で遠心力とコリオリ力を足すか (実寸の惑星。frame.js の注)
 
     // この距離より内側では、機体を惑星ローカル座標で動かす
@@ -111,7 +118,7 @@ export class Planet {
   /** 時刻 t (秒) での自転を反映する。 */
   updateRotation(t) {
     this.time = t;
-    this.quat.copy(this.tilt).multiply(_q.setFromAxisAngle(Y_AXIS, this.omega * t));
+    this.quat.copy(this.tilt).multiply(_q.setFromAxisAngle(Y_AXIS, this.rotationPhase + this.omega * t));
   }
 
   /** 惑星ローカル座標の点の真下の標高 (m, 海面 = 0)。 */
@@ -215,7 +222,13 @@ export class Planet {
     const m = (x, per) => ((x % per) + per) % per;
     u.uCamTile.value.set(m(camLocal.x, TILE), m(camLocal.y, TILE), m(camLocal.z, TILE));
     u.uCamTile2.value.set(m(camLocal.x, TILE2), m(camLocal.y, TILE2), m(camLocal.z, TILE2));
-    u.uTime.value = this.time % 4096; // 波を動かす時刻 (float の精度が落ちないよう折り返す)
+    u.uTime.value = this.time % 4096;
+    if (u.uCloudRot) {
+      // 雲の模様を自転軸まわりに流す。速さは m/s で決める (実寸でも風の速さが変わらないように)
+      const a1 = (this.time * CLOUD_WIND[0] / u.uCloudR.value) % (2 * Math.PI);
+      const a2 = (this.time * CLOUD_WIND[1] / u.uCloudR.value) % (2 * Math.PI);
+      u.uCloudRot.value.set(Math.cos(a1), Math.sin(a1), Math.cos(a2), Math.sin(a2));
+    } // 波を動かす時刻 (float の精度が落ちないよう折り返す)
     if (this.city) setCamLot(u, camLocal, this.city.N);
     if (this.lod) this.lod.update(camLocal);
     if (this.scatter) this.scatter.update(camLocal);

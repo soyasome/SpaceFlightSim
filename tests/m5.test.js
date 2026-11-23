@@ -115,7 +115,7 @@ test('星系: 何度作っても同じで、天体の座標系が重ならず、
 test('星系: 出発地は M1〜M4 と同じ配置 (TERRA と小惑星帯が開始位置のそばにある)', () => {
   const sys = generateSystem(HOME_STAR);
   const a = sys.planets[0];
-  assert(a.name === 'TERRA' && a.seed === 2024 && a.radius === 400e3 && a.terrain === null, 'TERRA が変わった');
+  assert(a.name === 'TERRA' && a.seed === 2024 && a.radius === 400e3 && a.terrain.maps.height === 'earth-height', 'TERRA が変わった');
   near(dist3(a.position, sys.start), Math.hypot(0.9e6, 0.3e6, 3.2e6), 1, '開始位置から TERRA まで');
   near(dist3(sys.belt.position, sys.start), Math.hypot(600, 9000), 1, '開始位置から小惑星帯まで');
   near(Math.hypot(...sys.start), Math.hypot(0.5e11, 0.45e11, 1.3e11), 1, '恒星までの距離');
