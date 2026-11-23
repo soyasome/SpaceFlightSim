@@ -14,7 +14,8 @@ python serve.py                                                # Python があ�
 ```
 
 - この開発機には Python がない (`python` は Microsoft Store の仮のファイルで、実行すると終了コード 9009)。
-  アプリのプレビュー (`.claude/launch.json`) も npx の http-server で起動する。
+  アプリのプレビュー (`.claude/launch.json`) も npx の http-server で起動する (`spaceflightsim`)。
+  npx がなく Python がある開発機では `spaceflightsim-python` (`python serve.py`) を使う。
 - `serve.py` は .js を必ず `text/javascript` で返し、キャッシュを無効にする。Windows では `python -m http.server` だと
   モジュールの MIME 型で失敗することがあるので、Python で立てるときはこちらを使う。Three.js を CDN から読むのでネット接続が必要。
 - 単体テスト: http://localhost:5173/tests.html を開く。ブラウザの中で動く自作ランナー (`tests/harness.js` の

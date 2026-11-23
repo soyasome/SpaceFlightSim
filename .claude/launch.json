@@ -4,7 +4,25 @@
     {
       "name": "spaceflightsim",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server@14.1.1", ".", "-p", "5173", "-a", "127.0.0.1", "-c-1", "-s"],
+      "runtimeArgs": [
+        "--yes",
+        "http-server@14.1.1",
+        ".",
+        "-p",
+        "5173",
+        "-a",
+        "127.0.0.1",
+        "-c-1",
+        "-s"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "spaceflightsim-python",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "serve.py"
+      ],
       "port": 5173
     }
   ]
