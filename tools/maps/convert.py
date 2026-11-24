@@ -5,6 +5,7 @@
     python tools/maps/convert.py 元の画像.tif earth-height --kind height --width 4096
     python tools/maps/convert.py 元の画像.tif earth-cover  --kind cover  --width 4096
     python tools/maps/convert.py 元の画像.tif moon-albedo  --kind albedo --width 2048
+    python tools/maps/convert.py 元の画像.tif earth-relief --kind relief --width 4096
 
 - 元の画像は Pillow で読める形 (GeoTIFF の多く、PNG、JPEG) か、numpy の .npy。
   正距円筒図法 (横が経度 360°、縦が緯度 180°、北が上) であること。
@@ -58,6 +59,28 @@ def resample(a, width, categorical):
     return np.array(img.resize((width, height), Image.BOX), dtype=np.float64)
 
 
+def block_edges(n_src, n_out):
+    """元の n_src 画素を n_out 個のまとまりに分けたときの、それぞれの始まりの番号。"""
+    return np.round(np.arange(n_out) * n_src / n_out).astype(int)
+
+
+def relief(a, width):
+    """起伏の大きさ (m): 出力の 1 画素に入る元の画素のうち、いちばん高い所が平均よりどれだけ高いか。
+
+    標高のマップは画素の平均なので、細い山頂はならされて低くなる。ゲームはこの値を、
+    マップより細かい尾根のノイズの強さに使う (src/terrain/terrainFn.js の mapHeight)。
+    平均が海面より下の画素 (海岸) は、海面からの高さにする (海の深さを起伏に数えない)。
+    """
+    height = width // 2
+    ys, xs = block_edges(a.shape[0], height), block_edges(a.shape[1], width)
+    a = a.astype(np.float32, copy=False)
+    top = np.maximum.reduceat(np.maximum.reduceat(a, ys, axis=0), xs, axis=1)
+    total = np.add.reduceat(np.add.reduceat(a, ys, axis=0, dtype=np.float64), xs, axis=1)
+    count = np.outer(np.diff(np.r_[ys, a.shape[0]]), np.diff(np.r_[xs, a.shape[1]]))
+    mean = total / count
+    return np.maximum(top - np.maximum(mean, 0), 0)
+
+
 def write_map(name, data, type_code, scale, offset):
     """見出しを付けて gzip で書き出す。"""
     h, w = data.shape
@@ -76,8 +99,9 @@ def main(argv=None):
     p = argparse.ArgumentParser(description='本物の地形のマップを assets/maps/<名前>.bin.gz に変える')
     p.add_argument('input', type=Path, help='元の画像 (正距円筒図法、北が上)')
     p.add_argument('name', help='出力の名前 (例: earth-height)。区分のマップは -cover で終える')
-    p.add_argument('--kind', required=True, choices=['height', 'cover', 'albedo', 'lights'],
-                   help='height: 標高 (m、Int16) / cover: 区分の番号 (Uint8) / albedo・lights: 明るさ (0..1、Uint8)')
+    p.add_argument('--kind', required=True, choices=['height', 'cover', 'albedo', 'lights', 'relief'],
+                   help='height: 標高 (m、Int16) / cover: 区分の番号 (Uint8) / albedo・lights: 明るさ (0..1、Uint8) / '
+                        'relief: 画素の中の起伏の大きさ (m、Uint8。元の標高の画像から作る)')
     p.add_argument('--width', type=int, required=True, help='出力の幅 (高さはその半分)')
     p.add_argument('--lon0', type=float, default=-180, help='元の画像の左端の経度 (度)。0 なら半分ずらす')
     p.add_argument('--value-scale', type=float, default=1.0, help='元の値に掛ける数 (標高の単位を m にするなど)')
@@ -95,6 +119,14 @@ def main(argv=None):
     if args.lon0 != -180:
         shift = int(round((args.lon0 + 180) / 360 * a.shape[1]))
         a = np.roll(a, shift, axis=1)
+    if args.kind == 'relief':
+        a = relief(a * args.value_scale, args.width)
+        step = max(1.0, float(np.ceil(a.max() / 255)))  # 1 段の高さ (m)。いちばん大きな起伏が 255 に収まるように
+        out = write_map(args.name, np.clip(np.round(a / step), 0, 255), TYPE_UINT8, step, 0.0)
+        print(f'{out} ({out.stat().st_size / 1e6:.2f} MB, {args.width}×{args.width // 2}, '
+              f'起伏 0〜{float(a.max()):.0f} m、1 段 {step:.0f} m)')
+        return
+
     a = resample(a, args.width, args.kind == 'cover')
 
     if args.kind == 'height':

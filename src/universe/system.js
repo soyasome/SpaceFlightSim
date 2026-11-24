@@ -261,7 +261,8 @@ function homeSystem(star, real = false) {
     rotationPhase: phaseToShow(start.map((v, i) => v - terraPos[i]), 0.3, 138),
     // 本物の地球の標高・水深 (NOAA ETOPO 2022)。山の高さは今の地形でも本物に近いので、両方の縮尺で 1 倍
     // (docs/design-earth-moon.md の 3.3・3.4)。色と植生は土地被覆のマップがまだないので、今のノイズの規則のまま
-    terrain: { maps: { height: 'earth-height' }, heightScale: 1 },
+    // 起伏のマップ (earth-relief) で、標高のマップでならされた山の険しさを尾根のノイズで戻す
+    terrain: { maps: { height: 'earth-height', relief: 'earth-relief' }, heightScale: 1 },
     atmosphere: { ...AIR_EARTH, sunIntensity: 22 },
     skyLight: [0.3, 0.42, 0.62],
     clouds: { altitude: 4000, cover: 0.55 }, // 雲の層 (atmosphere.js の CLOUD_GLSL)

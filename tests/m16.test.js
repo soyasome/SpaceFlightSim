@@ -28,20 +28,29 @@ function terrainOf(scale, name) {
   return terrains[key] || (terrains[key] = makeTerrain(body(scale, name)));
 }
 /**
- * 緯度経度 (度) の地点の標高。細かさは半径の 1/600 (地球のマップの約 2 画素) にして、マップの値をおもに見る。
- * 半径に対する割合で決めるので、両方の縮尺で同じ縮小版を読む
+ * 緯度経度 (度) の地点の標高 (地形関数は単位ベクトルで受け取る)。細かさ minWL を省くと半径の 1/600
+ * (地球のマップの約 2 画素) にして、マップの値をおもに見る。半径に対する割合なので、両方の縮尺で同じ縮小版を読む
  */
-function heightAt(scale, name, lat, lon) {
-  const t = terrainOf(scale, name), R = body(scale, name).radius;
-  const [x, y, z] = geoToLocal(lat, lon);
-  return t.height(x * R, y * R, z * R, R / 600);
+function heightAt(scale, name, lat, lon, minWL = body(scale, name).radius / 600) {
+  return terrainOf(scale, name).height(...geoToLocal(lat, lon), minWL);
 }
 function colorAt(scale, name, lat, lon) {
   const t = terrainOf(scale, name), R = body(scale, name).radius;
-  const [x, y, z] = geoToLocal(lat, lon).map((v) => v * R);
+  const [x, y, z] = geoToLocal(lat, lon);
   const out = [0, 0, 0, 0];
   t.color(out, t.height(x, y, z, R / 600), 0.05, x, y, z);
   return (out[0] + out[1] + out[2]) / 3;
+}
+/** 中心 (度) から ±half (度) の四角の中を n×n 点で調べた、細かい地形 (minWL m) の標高の最高・平均・最低 */
+function areaStats(scale, name, lat, lon, half, n, minWL) {
+  let top = -Infinity, low = Infinity, sum = 0;
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const h = heightAt(scale, name, lat - half + (2 * half * j) / (n - 1), lon - half + (2 * half * i) / (n - 1), minWL);
+      top = Math.max(top, h); low = Math.min(low, h); sum += h;
+    }
+  }
+  return { top, low, mean: sum / (n * n) };
 }
 
 test('地球: 本物の標高のマップで、エベレストは高く、太平洋は深く、日本は陸', () => {
@@ -53,6 +62,37 @@ test('地球: 本物の標高のマップで、エベレストは高く、太平
     assert(h(36.2, 138.2) > 300, `${scale}: 本州の中部 ${h(36.2, 138.2).toFixed(0)} m`);
     assert(h(-80, 0) > 1500, `${scale}: 南極の氷床 ${h(-80, 0).toFixed(0)} m`);
     assert(h(40, -40) < -2000, `${scale}: 大西洋 ${h(40, -40).toFixed(0)} m`);
+  }
+});
+
+test('地球: 起伏のマップで、ならされた山の最高点が本物に近づき、平野は平らなまま (両方の縮尺)', () => {
+  loaded();
+  // 山頂の位置はノイズで決まるので、1 つの山ではなく 8 つの山の平均で見る。
+  // まわり約 18 km 四方の最高点が、マップの値 (画素の平均) より平均して起伏の 3〜13 割ぶん高い
+  const peaks = [[27.99, 86.93], [35.88, 76.51], [-32.65, -70.01], [63.07, -151.0], [45.83, 6.86], [-3.07, 37.35],
+    [43.35, 42.44], [35.36, 138.73]]; // エベレスト、K2、アコンカグア、デナリ、モンブラン、キリマンジャロ、エルブルス、富士山
+  const hMap = getMap('earth-height'), rMap = getMap('earth-relief'), D = Math.PI / 180;
+  // 細かさ: 実寸で 200 m、ゲーム用はその 1/16 (同じ角度)
+  for (const [scale, minWL] of [['game', 12.5], ['real', 200]]) {
+    let rise = 0, relief = 0, top = 0;
+    for (const [lat, lon] of peaks) {
+      const a = areaStats(scale, 'TERRA', lat, lon, 0.08, 33, minWL);
+      rise += a.top - hMap.linear(lat * D, lon * D, 0);
+      relief += rMap.linear(lat * D, lon * D, 0);
+      top = Math.max(top, a.top);
+    }
+    assert(rise > 0.3 * relief && rise < 1.3 * relief,
+      `${scale}: 最高点の上がり方 ${(rise / peaks.length).toFixed(0)} m (起伏の平均 ${(relief / peaks.length).toFixed(0)} m)`);
+    assert(top < 10500, `${scale}: 高すぎる山 ${top.toFixed(0)} m`);
+    const kanto = areaStats(scale, 'TERRA', 35.9, 139.6, 0.1, 15, minWL);
+    assert(kanto.top - kanto.low < 400, `${scale}: 関東平野の高低差 ${(kanto.top - kanto.low).toFixed(0)} m`);
+  }
+  // 細部を省いた粗いメッシュでも、平均の高さはほとんど変わらない (尾根のノイズの平均を引いているので)
+  for (const scale of ['game', 'real']) {
+    const R = body(scale, 'TERRA').radius;
+    const fine = areaStats(scale, 'TERRA', 30, 84, 1.5, 30, R / 30000).mean;
+    const coarse = areaStats(scale, 'TERRA', 30, 84, 1.5, 30, R / 300).mean;
+    assert(Math.abs(fine - coarse) < 250, `${scale}: チベットの平均の高さ 細かい ${fine.toFixed(0)} m・粗い ${coarse.toFixed(0)} m`);
   }
 });
 

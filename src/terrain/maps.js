@@ -151,9 +151,10 @@ export function mapUrl(name) {
 
 /**
  * 縮小版を作らないマップかどうか。名前の決まり:
- * 〜-cover は区分の番号 (平均すると意味がなくなる)、〜-lights は GPU のテクスチャにするだけ (縮小版は GPU が作る)。
+ * 〜-cover は区分の番号 (平均すると意味がなくなる)、〜-lights は GPU のテクスチャにするだけ (縮小版は GPU が作る)、
+ * 〜-relief はいつも元の細かさで読む (terrainFn.js の mapHeight)。
  */
-const isCategorical = (name) => name.endsWith('-cover') || name.endsWith('-lights');
+const isCategorical = (name) => name.endsWith('-cover') || name.endsWith('-lights') || name.endsWith('-relief');
 
 /**
  * マップを読み込む (同じ名前は使い回す)。読み込めなければ例外になり、その名前は「読み込めなかった」として覚える。

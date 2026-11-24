@@ -94,7 +94,7 @@ const CLIFFS = {
  *   tint  色合い [r, g, b] (掛け算)
  *   craters  クレーターの深さの倍率 (省くと種類ごとの既定値。0 でなし)
  *   canyons, mesas  渓谷・台地の倍率 (省くと 1。0 でなし。設定は種類ごとに CLIFFS)
- *   maps  本物の地形のマップの名前 { height?, cover?, albedo? } (src/terrain/maps.js。先に読み込んでおく)。
+ *   maps  本物の地形のマップの名前 { height?, cover?, albedo?, relief? } (src/terrain/maps.js。先に読み込んでおく)。
  *         height があると、大きな模様 (大陸・山脈の分布) をマップの標高に置き換え、
  *         マップの画素より細かい波長のノイズだけを足す。渓谷と台地は作らない。docs/design-earth-moon.md の 3章
  *   heightScale  マップの標高に掛ける倍率 (省くと 1)
@@ -113,6 +113,8 @@ export function makeTerrain(def) {
   const hMap = MAPS.height ? requireMap(MAPS.height) : null;
   const coverMap = MAPS.cover ? requireMap(MAPS.cover) : null;
   const albedoMap = MAPS.albedo ? requireMap(MAPS.albedo) : null;
+  // 画素の中の起伏の大きさ (m)。標高のマップでならされた山の険しさを、尾根のノイズの強さで戻す (tools/maps/convert.py の relief)
+  const reliefMap = hMap && MAPS.relief ? requireMap(MAPS.relief) : null;
   const heightScale = T.heightScale ?? 1;
   // ノイズを足す波長の上限 (m)。これより長い波長はマップにすでにある
   const CUT = hMap ? 2 * hMap.pixelAngle * R : 0;
@@ -145,7 +147,8 @@ export function makeTerrain(def) {
   const SLOPE_DECAY = 0.75; // 細かいオクターブほど「斜面の急さ」への寄与を小さくする
 
   // 尾根が鋭く立つノイズ (0..1)。山脈に使う。(ux,uy,uz) は鉛直方向 (勾配から鉛直成分を除く)。
-  function ridged(x, y, z, octaves, ux, uy, uz, start = 0) {
+  // partial: 渡すと、i 番目のオクターブまでの和を partial[i] に入れる (起伏のマップの尾根の目盛り合わせ用)
+  function ridged(x, y, z, octaves, ux, uy, uz, start = 0, partial = null) {
     // 尾根の線 (n = 0) をまたぐと勾配の向きが反転するので、ベクトルで足すと
     // そこに段差ができる。向きを捨てて、急さの2乗だけを積む。
     let a = 0.5, s = 0, w = 1, steep = 0, sw = 1;
@@ -155,6 +158,7 @@ export function makeTerrain(def) {
       v *= v * w;
       w = sat(v * 2);
       if (i >= start) s += (v * a) / (1 + EROSION * steep);
+      if (partial) partial[i] = s;
       let gx = _nd[1], gy = _nd[2], gz = _nd[3];
       const r = gx * ux + gy * uy + gz * uz;
       gx -= r * ux; gy -= r * uy; gz -= r * uz;
@@ -431,6 +435,30 @@ export function makeTerrain(def) {
    * 海のある天体では、海岸の近く (マップの標高 0〜60 m) で細かい模様を弱め、海底には足さない
    * (小さな島や池が散らばらないように)。陸がノイズで深く削られて湖にならないよう、下げる量はもとの高さの 8 割まで。
    */
+  /**
+   * 起伏のマップで尾根を作るための目盛り。尾根のノイズは、足し始めるオクターブ (縮尺で変わる) によって
+   * 値の散らばり方が違うので、決まった 512 点で実際に計算して測る (乱数の種が同じなので、Worker でも同じ値になる)。
+   * mean[k]: k 個目のオクターブまで足したときの平均。粗いメッシュ (オクターブが少ない) でも、
+   *   その数の平均を引くので、細部を省いても平均の高さが変わらない。
+   * span: すべて足したとき、上位 3% の値が平均からどれだけ高いか。起伏の値 (画素の中の最高点 − 平均) をこれに合わせる
+   */
+  const RIDGE_OCT = 14;
+  const ridgeCal = hMap && reliefMap ? (() => {
+    const f9 = 9 * S, start = firstOct(f9, 2.07);
+    const N = 512, sums = new Float64Array(RIDGE_OCT), part = new Float64Array(RIDGE_OCT), all = [];
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let k = 0; k < N; k++) {
+      const yy = rnd() * 2 - 1, a = rnd() * 2 * Math.PI, c = Math.sqrt(1 - yy * yy);
+      const x = c * Math.cos(a), y = yy, z = c * Math.sin(a);
+      all.push(ridged(x * f9 + 1.9, y * f9 - 4.2, z * f9 + 8.8, RIDGE_OCT, x, y, z, start, part));
+      for (let i = 0; i < RIDGE_OCT; i++) sums[i] += part[i];
+    }
+    all.sort((p, q) => p - q);
+    const mean = Array.from(sums, (v) => v / N);
+    return { start, mean, span: Math.max(all[Math.floor(N * 0.97)] - mean[RIDGE_OCT - 1], 1e-6) };
+  })() : null;
+
   function mapHeight(x, y, z, minWL) {
     const geo = localToGeoRad(x, y, z);
     const base = hMap.cubic(geo.lat, geo.lon, minWL / R) * heightScale;
@@ -439,8 +467,18 @@ export function makeTerrain(def) {
     let detail = 0;
     if (coast > 0.001) {
       // 尾根は高い所 (山脈) にだけ足す。月 (岩石天体) には足さない
-      const mMask = sea ? smooth(300, 2500, base) : 0;
-      if (mMask > 0.001) {
+      let mMask = sea ? smooth(300, 2500, base) : 0;
+      if (sea && reliefMap) {
+        // 起伏のマップがあれば、尾根の強さを本物の起伏の大きさで決める。尾根のノイズの平均を引いて
+        // マップの画素の平均の高さを変えず、高い尾根 (上位 3%) が「平均 + 起伏」に届くようにする (ridgeCal)
+        const rel = reliefMap.linear(geo.lat, geo.lon, 0);
+        mMask = smooth(100, 1200, rel);
+        const f9 = 9 * S, k = oct(f9, minWL, RIDGE_OCT);
+        const r = ridged(x * f9 + 1.9, y * f9 - 4.2, z * f9 + 8.8, k, x, y, z, ridgeCal.start);
+        const d = (rel * (r - ridgeCal.mean[k - 1])) / ridgeCal.span;
+        // まれに起伏の 2 倍を超える尾根が立つので、起伏より上は 3 割に縮める (エベレストが 1 万 m を超えないように)
+        detail += d > rel ? rel + (d - rel) * 0.3 : d;
+      } else if (mMask > 0.001) {
         const f9 = 9 * S;
         detail += mMask * T.mAmp
           * ridged(x * f9 + 1.9, y * f9 - 4.2, z * f9 + 8.8, oct(f9, minWL, 14), x, y, z, firstOct(f9, 2.07));

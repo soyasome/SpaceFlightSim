@@ -246,7 +246,7 @@ STARWAKE はブラウザで動く宇宙フライトシミュレーター。6自�
   GANYMEDES, CALLISTO, TITAN, TRITON。SATURNUS には環 (当たり判定なし)、IUPPITER には大赤斑がある。
 - 哨戒隊: 小惑星帯に RAIDER 2機、TERRA の北緯 36°・東経 139.7° (関東平野)・高度 5 km に RAIDER 2機と GUNSHIP 1機 (`:277-280`)。
   緯度経度は `src/terrain/geo.js` で惑星ローカル座標に変える (東経が正。地表が自転で動く向きが東)。
-- TERRA の地形は本物の地球の標高 (`terrain.maps.height = 'earth-height'`、倍率 1)。夜の街明かり (`nightLights: 'earth-lights'`) を持ち、
+- TERRA の地形は本物の地球の標高と起伏 (`terrain.maps = { height: 'earth-height', relief: 'earth-relief' }`、倍率 1)。夜の街明かり (`nightLights: 'earth-lights'`) を持ち、
   開始時に日本 (東経 138°) が開始地点の方を向くよう `rotationPhase` を決めてある (`phaseToShow`)。
   LUNA の地形は本物の月の標高と明るさ (`moon-height`・`moon-albedo`、高さの倍率はゲーム用 0.4・実寸 1)。
 - TERRA は雲の層 (`clouds: { altitude: 4000, cover: 0.55 }`) を持つ。LUNA は潮汐ロック (`tidalLock`。自転せず、
@@ -265,10 +265,13 @@ STARWAKE はブラウザで動く宇宙フライトシミュレーター。6自�
   - 渓谷と台地の種類ごとの設定は `CLIFFS` (`:34`)。
   - 同じ定義から、メインスレッド (接地) と Worker (メッシュ) の両方で同じ関数を作るので、見た目と当たり判定が一致する。
   - 標高 0 以下は平らな低地になり、種類によって海・乾いた盆地・氷原・溶岩の海として描く。
-  - `terrain.maps` (`{ height?, cover?, albedo? }`) があると、本物の地形のマップ (`src/terrain/maps.js`) を使う。
+  - `terrain.maps` (`{ height?, cover?, albedo?, relief? }`) があると、本物の地形のマップ (`src/terrain/maps.js`) を使う。
     大きな模様をマップの標高 (× `heightScale`) に置き換え、マップの画素の 2 倍より短い波長のノイズだけを足す。
     海岸 (標高 0〜60 m) では細かい模様を弱め、海底には足さない。渓谷・台地は作らず、マップより大きなクレーターも足さない。
     `cover` は土地被覆の区分 (IGBP) で海洋惑星の色と木を、`albedo` は岩石天体の明るさを決める。
+    `relief` (画素の中の最高点が平均よりどれだけ高いか、m) があると、海洋惑星の尾根のノイズの強さをこの値で決める。
+    尾根のノイズは平均を引いてマップの高さを変えず、上位 3% が「平均 + 起伏」に届くよう、地形を作るときに決まった 512 点で目盛りを合わせる
+    (足し始めるオクターブが縮尺で変わり、値の散らばり方が違うため)。起伏より上に出た尾根は 3 割に縮める。
     マップは使う前に読み込んでおく (`main.js` が開始前に SOL の分を読む。Worker は自分で読む)。読み込めなかったマップを使う天体は、
     `usableTerrain` で今のノイズの地形にする (`docs/design-earth-moon.md` の 3章・7章)。
   - 天体の定義の `nightLights` (マップの名前) があると、地表のシェーダーがそのマップをテクスチャにして、夜側に街明かりを足す
